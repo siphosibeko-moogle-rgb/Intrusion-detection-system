@@ -1,3 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<session version="1.0">&#x0A;<refactoring comment="Move &apos;Dockerfile.yml&apos; to &apos;target&apos;" description="Move &apos;Dockerfile.yml&apos; to &apos;target&apos;" destination="target" element1="Dockerfile.yml" flags="7" id="org.eclipse.ltk.core.refactoring.move.resources" resources="1" stamp="1777819125605" updateReferences="true"/>&#x0A;<refactoring comment="Move &apos;Dockerfile.yml&apos; to &apos;backend&apos;" description="Move &apos;Dockerfile.yml&apos; to &apos;backend&apos;" destination="/backend" element1="target/Dockerfile.yml" flags="7" id="org.eclipse.ltk.core.refactoring.move.resources" resources="1" stamp="1777819132195" updateReferences="true"/>
-</session>

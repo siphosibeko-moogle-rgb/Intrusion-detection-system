@@ -1,0 +1,28 @@
+# Eclipse workspace — never commit this
+.metadata/
+
+# Compiled output
+target/
+BOOT-INF/
+*.class
+*.jar
+*.war
+
+# Logs
+logs/
+*.log
+
+# IDE files
+.classpath
+.project
+.settings/
+.factorypath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+application-prod.properties
+application-local.properties
+*.env

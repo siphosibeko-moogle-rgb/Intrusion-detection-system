@@ -1,4 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<session version="1.0">
-<refactoring comment="Move &apos;IDSApplication.java&apos; to &apos;ids&apos;" description="Move &apos;IDSApplication.java&apos; to &apos;ids&apos;" destination="src/main/java/com/ids" element1="src/main/java/pom/IDSApplication.java" flags="7" id="org.eclipse.ltk.core.refactoring.move.resources" resources="1" stamp="1777285556549" updateReferences="true"/>
-</session>

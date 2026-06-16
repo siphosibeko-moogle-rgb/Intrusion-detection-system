@@ -1,6 +1,0 @@
-#Sat May 16 15:59:24 SAST 2026
-__DEFAULT__=false
-expression=WhitelistEntry
-org.eclipse.help.ui.localSearch.master=true
-org.eclipse.sdk.Eclipse.master=true
-org.eclipse.sdk.Google.master=true

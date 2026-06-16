@@ -1,5 +1,0 @@
-package com.ids.detectors;
-
-public class SqlInjectionDetector {
-
-}

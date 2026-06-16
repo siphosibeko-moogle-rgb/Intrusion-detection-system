@@ -1,7 +1,0 @@
-INDEX VERSION 1.4+/home/twon/Desktop/Intrusion detection system/.metadata/.plugins/org.eclipse.wst.jsdt.core/indexes
-2237911324.index
-667452270.index
-865960247.index
-2214198665.index
-258398423.index
-1466191460.index

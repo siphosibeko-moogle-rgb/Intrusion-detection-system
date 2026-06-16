@@ -1,6 +1,0 @@
-#Mon Jun 08 00:44:27 SAST 2026
-__DEFAULT__=false
-expression=analyzeArp
-org.eclipse.help.ui.localSearch.master=true
-org.eclipse.sdk.Eclipse.master=true
-org.eclipse.sdk.Google.master=true
