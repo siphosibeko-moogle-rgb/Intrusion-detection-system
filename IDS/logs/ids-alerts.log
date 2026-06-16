@@ -554,3 +554,39 @@
 [2026-06-16T11:40:09.794027832] UNKNOWN_MAC | src=192.168.8.114 (e8:fb:1c:a2:9d:f9) -> dst=160.79.104.10 | severity=MEDIUM | Unknown MAC on LAN: e8:fb:1c:a2:9d:f9 (IP: 192.168.8.114)
 [2026-06-16T11:40:33.013960101] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
 [2026-06-16T11:41:33.343933910] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:42:33.653982703] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:43:33.953949911] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:44:34.283978732] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:44:39.793959540] UNKNOWN_MAC | src=192.168.8.114 (e8:fb:1c:a2:9d:f9) -> dst=185.199.111.215 | severity=MEDIUM | Unknown MAC on LAN: e8:fb:1c:a2:9d:f9 (IP: 192.168.8.114)
+[2026-06-16T11:45:34.604086206] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:45:39.803944658] UNKNOWN_MAC | src=192.168.8.114 (e8:fb:1c:a2:9d:f9) -> dst=20.87.245.0 | severity=MEDIUM | Unknown MAC on LAN: e8:fb:1c:a2:9d:f9 (IP: 192.168.8.114)
+[2026-06-16T11:46:28.764305642] NMAP_UDP_SCAN | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Nmap UDP scan from 192.168.8.146
+[2026-06-16T11:46:34.913973977] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:47:35.213920466] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:48:35.633928568] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:49:35.944001955] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:50:36.253905819] UNKNOWN_IP | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown internal IP: 192.168.8.146 [MAC: 18:30:0c:dd:cb:f1]
+[2026-06-16T11:50:36.253932239] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:50:37.223915918] NMAP_UDP_SCAN | src=3.160.170.95 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 3.160.170.95
+[2026-06-16T11:50:41.243945080] NMAP_UDP_SCAN | src=3.160.170.95 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 3.160.170.95
+[2026-06-16T11:50:47.963893347] NMAP_UDP_SCAN | src=3.160.170.95 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 3.160.170.95
+[2026-06-16T11:51:09.544116913] NMAP_UDP_SCAN | src=3.160.170.95 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 3.160.170.95
+[2026-06-16T11:51:36.584442838] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:52:09.323921555] NMAP_UDP_SCAN | src=192.178.54.14 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 192.178.54.14
+[2026-06-16T11:52:09.953859442] NMAP_UDP_SCAN | src=142.251.47.202 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 142.251.47.202
+[2026-06-16T11:52:12.653837815] NMAP_UDP_SCAN | src=142.251.47.202 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 142.251.47.202
+[2026-06-16T11:52:18.263857507] NMAP_UDP_SCAN | src=142.251.47.1 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 142.251.47.1
+[2026-06-16T11:52:36.984004864] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:52:37.283932423] NMAP_UDP_SCAN | src=192.178.54.14 (24:fb:65:79:54:54) -> dst=192.168.8.114 | severity=MEDIUM | Nmap UDP scan from 192.178.54.14
+[2026-06-16T11:53:37.313969535] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:54:37.633983767] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:54:54.624010406] NMAP_UDP_SCAN | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Nmap UDP scan from 192.168.8.146
+[2026-06-16T11:54:54.934429697] UBA_BURST_ACTIVITY | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=HIGH | UBA — burst activity: 192.168.8.146 sent 23 events/min vs 7.6 avg/min (3.0x normal)
+[2026-06-16T11:55:38.043971492] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:55:38.043971422] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:55:38.044308314] UBA_BURST_ACTIVITY | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=HIGH | UBA — burst activity: 192.168.8.146 sent 23 events/min vs 7.6 avg/min (3.0x normal)
+[2026-06-16T11:56:38.364013680] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:57:38.674035172] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:58:38.994301053] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T11:59:39.303956115] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
+[2026-06-16T12:00:39.613966791] UNKNOWN_MAC | src=192.168.8.146 (18:30:0c:dd:cb:f1) -> dst=239.255.255.250 | severity=MEDIUM | Unknown MAC on LAN: 18:30:0c:dd:cb:f1 (IP: 192.168.8.146)
