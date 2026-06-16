@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Move &apos;ids-alerts.log&apos; to &apos;desktop&apos;" description="Move &apos;ids-alerts.log&apos; to &apos;desktop&apos;" destination="/desktop" element1="/engine/ids-alerts.log" flags="7" id="org.eclipse.ltk.core.refactoring.move.resources" resources="1" stamp="1780648702719" updateReferences="true"/>
+</session>

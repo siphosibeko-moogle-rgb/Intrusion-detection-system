@@ -1,0 +1,66 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Parent -->
+  <parent>
+    <groupId>com.ids</groupId>
+    <artifactId>IDS</artifactId>
+    <version>1.0.0</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>web</artifactId>
+  <name>IDS Web</name>
+
+  <!--Use JAR, not WAR -->
+  <packaging>jar</packaging>
+
+  <dependencies>
+
+    <!-- Connect to backend -->
+    <dependency>
+      <groupId>com.ids</groupId>
+      <artifactId>backend</artifactId>
+    </dependency>
+
+    <!-- Spring Boot Web -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <!-- Thymeleaf (optional UI) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+
+    <!-- WebSocket -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+    <plugins>
+
+      <!--ENABLE Spring Boot -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+        <skip>true</skip>
+    </configuration>
+      </plugin>
+
+    </plugins>
+  </build>
+
+</project>

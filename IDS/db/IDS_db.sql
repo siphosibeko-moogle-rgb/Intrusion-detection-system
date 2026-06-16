@@ -1,0 +1,78 @@
+CREATE TABLE users (
+    user_id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(100),
+    role VARCHAR(20), -- admin, analyst, etc.
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE login_events (
+    login_id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(user_id),
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    success BOOLEAN,
+    failure_reason VARCHAR(255),
+    user_agent TEXT,
+    geo_location VARCHAR(100)
+);
+CREATE TABLE packet_records (
+    packet_id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP,
+    source_ip VARCHAR(45),
+    destination_ip VARCHAR(45),
+    source_port INT,
+    destination_port INT,
+    protocol VARCHAR(10),
+    packet_size INT,
+    payload TEXT
+);
+CREATE TABLE threat_events (
+    event_id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP,
+    source_ip VARCHAR(45),
+    destination_ip VARCHAR(45),
+    threat_type VARCHAR(50),
+    severity VARCHAR(20),
+    description TEXT
+);
+CREATE TABLE event_packet_link (
+    id SERIAL PRIMARY KEY,
+    event_id INT REFERENCES threat_events(event_id),
+    packet_id INT REFERENCES packet_records(packet_id)
+);
+CREATE TABLE alerts (
+    alert_id SERIAL PRIMARY KEY,
+    event_id INT REFERENCES threat_events(event_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20), -- OPEN, INVESTIGATING, CLOSED
+    assigned_to INT REFERENCES users(user_id)
+);
+CREATE TABLE forensic_logs (
+    log_id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP,
+    entity_type VARCHAR(50), -- USER, IP, EVENT
+    entity_id INT,
+    action TEXT,
+    related_event INT REFERENCES threat_events(event_id)
+);
+-- Your trusted internal devices (full skip)
+CREATE TABLE my_whitelist (
+    id          SERIAL PRIMARY KEY,
+    ip          VARCHAR(45),
+    mac         VARCHAR(17),
+    label       VARCHAR(100),        -- e.g. "Router", "My Laptop", "Docker Bridge"
+    added_at    TIMESTAMP DEFAULT NOW()
+);
+
+-- Auto-discovered external organizations (partial skip)
+CREATE TABLE org_whitelist (
+    id           SERIAL PRIMARY KEY,
+    ip           VARCHAR(45)  NOT NULL,
+    org_name     VARCHAR(100),        -- e.g. "Google LLC"
+    asn          VARCHAR(20),         -- e.g. "AS15169"
+    country      VARCHAR(10),         -- e.g. "US"
+    approved     BOOLEAN DEFAULT FALSE,
+    first_seen   TIMESTAMP DEFAULT NOW(),
+    last_seen    TIMESTAMP DEFAULT NOW(),
+    hit_count    INT DEFAULT 1        -- how many times flagged
+);

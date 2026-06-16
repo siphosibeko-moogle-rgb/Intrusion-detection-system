@@ -1,0 +1,179 @@
+package com.ids.detectors;
+
+import com.ids.alerts.AlertManager;
+import com.ids.models.PacketContext;
+import com.ids.models.PacketRecord;
+import com.ids.models.ThreatEvent;
+import com.ids.models.ThreatEvent.Severity;
+import com.ids.models.ThreatEvent.ThreatType;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class NmapScanDetector {
+
+    private static final int SYN_THRESHOLD        = 15;
+    private static final int NULL_FIN_XMAS_THRESH = 3;
+    private static final int UDP_THRESHOLD        = 10;
+    private static final int PORT_SWEEP_THRESHOLD = 20;
+    private static final long COOLDOWN_MS         = 2000L;
+
+    private final Map<String, PacketRecord> records = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastAlerts      = new ConcurrentHashMap<>();
+
+    private final AlertManager alertManager;
+
+    public NmapScanDetector(AlertManager alertManager) {
+        this.alertManager = alertManager;
+    }
+
+    public void analyze(PacketContext ctx) {
+
+        if (!ctx.isTcp() && !ctx.isUdp()) return;
+
+        String srcIP  = ctx.getSrcIp();
+        String dstIP  = ctx.getDstIp();
+        String srcMac = ctx.getSrcMac();
+        String dstMac = ctx.getDstMac();
+
+        if (srcIP == null) return;
+
+        String key = srcIP;
+        long now = ctx.getTimestamp();
+
+        PacketRecord rec = records.computeIfAbsent(key,
+                k -> new PacketRecord(srcIP, srcMac));
+
+        rec.updateMacIfBlank(srcMac);
+        rec.addTimestamp(now);
+
+        // TCP SCANS
+        if (ctx.isTcp()) {
+
+            int port = ctx.getDstPort();
+            rec.addScannedPort(port, now);
+
+            boolean syn = ctx.isSyn();
+            boolean ack = ctx.isAck();
+            boolean fin = ctx.isFin();
+            boolean psh = ctx.isPsh();
+            boolean urg = ctx.isUrg();
+            boolean rst = ctx.isRst();
+
+            // SYN SCAN
+            if (syn && !ack && !fin) {
+                rec.recordSyn(now);
+
+                alert(ThreatType.NMAP_SYN_SCAN, key + ":SYN",
+                        rec.getSynCount(now), SYN_THRESHOLD,
+                        srcIP, srcMac, dstIP, dstMac, now, rec,
+                        "Nmap SYN scan from " + srcIP,
+                        Severity.HIGH, "TCP", "SYN", port);
+            }
+
+            // NULL SCAN
+            if (!syn && !ack && !fin && !psh && !urg && !rst) {
+                rec.recordNull(now);
+
+                alert(ThreatType.NMAP_NULL_SCAN, key + ":NULL",
+                        rec.getNullCount(now), NULL_FIN_XMAS_THRESH,
+                        srcIP, srcMac, dstIP, dstMac, now, rec,
+                        "Nmap NULL scan from " + srcIP,
+                        Severity.HIGH, "TCP", "NULL", port);
+            }
+
+            // FIN SCAN
+            if (fin && !syn && !ack && !psh && !urg && !rst) {
+                rec.recordFin(now);
+
+                alert(ThreatType.NMAP_FIN_SCAN, key + ":FIN",
+                        rec.getFinCount(now), NULL_FIN_XMAS_THRESH,
+                        srcIP, srcMac, dstIP, dstMac, now, rec,
+                        "Nmap FIN scan from " + srcIP,
+                        Severity.HIGH, "TCP", "FIN", port);
+            }
+
+            // XMAS SCAN
+            if (fin && psh && urg && !syn && !ack) {
+                rec.recordXmas(now);
+
+                alert(ThreatType.NMAP_XMAS_SCAN, key + ":XMAS",
+                        rec.getXmasCount(now), NULL_FIN_XMAS_THRESH,
+                        srcIP, srcMac, dstIP, dstMac, now, rec,
+                        "Nmap XMAS scan from " + srcIP,
+                        Severity.HIGH, "TCP", "XMAS", port);
+            }
+
+        }
+        // UDP SCAN
+        if (ctx.isUdp()) {
+
+            int port = ctx.getDstPort();
+
+            rec.addScannedPort(port, now);
+            rec.recordUdp(now);
+
+            alert(ThreatType.NMAP_UDP_SCAN, key + ":UDP",
+                    rec.getUdpCount(now), UDP_THRESHOLD,
+                    srcIP, srcMac, dstIP, dstMac, now, rec,
+                    "Nmap UDP scan from " + srcIP,
+                    Severity.MEDIUM, "UDP", "UDP", port);
+        }
+        // PORT SWEEP
+        if (rec.getUniquePortCount(now) >= PORT_SWEEP_THRESHOLD) {
+
+            alert(ThreatType.NMAP_PORT_SWEEP, key + ":SWEEP",
+                    rec.getUniquePortCount(now), PORT_SWEEP_THRESHOLD,
+                    srcIP, srcMac, dstIP, dstMac, now, rec,
+                    "Port sweep detected from " + srcIP,
+                    Severity.CRITICAL, "TCP", "SWEEP", 0);
+        }
+    }
+
+    private void alert(ThreatType type,
+                       String alertKey,
+                       int count,
+                       int threshold,
+                       String srcIP,
+                       String srcMac,
+                       String dstIP,
+                       String dstMac,
+                       long now,
+                       PacketRecord rec,
+                       String details,
+                       Severity sev,
+                       String protocol,
+                       String reqType,
+                       int port) {
+
+        if (count < threshold) return;
+
+        Long last = lastAlerts.get(alertKey);
+        if (last != null && (now - last) < COOLDOWN_MS) return;
+
+        lastAlerts.put(alertKey, now);
+
+        alertManager.raise(new ThreatEvent(
+                type,
+                srcIP,
+                srcMac,
+                dstIP,
+                dstMac,
+                rec.getWindowCount(now),
+                2000,
+                details,
+                sev,
+                protocol,
+                reqType,
+                port
+        ));
+    }
+
+    public void cleanup() {
+        long now = System.currentTimeMillis();
+
+        records.entrySet().removeIf(e ->
+                now - e.getValue().getLastSeen() > 10000
+        );
+    }
+}

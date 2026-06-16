@@ -1,0 +1,5 @@
+package com.ids.detectors;
+
+public class Detector {
+
+}

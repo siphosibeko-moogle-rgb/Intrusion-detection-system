@@ -1,0 +1,5 @@
+package com.ids.desktop.controller;
+
+public class AlertTableManager {
+
+}
