@@ -32,9 +32,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ids_db
       SPRING_DATASOURCE_USERNAME: ids_user
       SPRING_DATASOURCE_PASSWORD: ids_pass
-      IDS_JWT_SECRET: IDS-Super-Secret-JWT-Key-2024-ChangeInProduction
+      IDS_JWT_SECRET:
       IDS_JWT_EXPIRATION: 86400000
-      IDS_ENGINE_APIKEY: ids-engine-secret-key-2024
+      IDS_ENGINE_APIKEY:
     healthcheck:
       test: ["CMD-SHELL", "timeout 3 bash -c 'cat < /dev/null > /dev/tcp/localhost/8080' && exit 0 || exit 1"]
       interval: 10s
@@ -77,7 +77,7 @@ services:
 
   kali:
     image: kalilinux/kali-rolling
-    container_name: ids_kali_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
+    container_name: ids_kali
     tty: true
     stdin_open: true
 
