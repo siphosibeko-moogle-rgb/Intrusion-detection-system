@@ -64,8 +64,14 @@ services:
       - ./logs:/app/logs
 
     environment:
+<<<<<<< HEAD
       IDS_ENGINE_USER:
       IDS_ENGINE_PASS:
+=======
+      IDS_ENGINE_USER: admin
+      IDS_ENGINE_PASS: admin123
+      IDS_ENGINE_APIKEY: ids-engine-secret-key-2024
+>>>>>>> bdee41e (Add IP investigation panel and alert enhancements)
 
     command:
       - java

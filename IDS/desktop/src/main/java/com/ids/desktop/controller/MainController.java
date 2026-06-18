@@ -13,6 +13,9 @@ import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 
@@ -32,7 +35,7 @@ public class MainController implements Initializable {
     private static final DateTimeFormatter FMT  =
             DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
-    // ── FXML BINDINGS ────────────────────────────────────────────────────────
+    //FXML BINDINGS
     @FXML private Label  lblStatus;
     @FXML private Circle dotLive;
     @FXML private Label  lblUser;
@@ -91,6 +94,7 @@ public class MainController implements Initializable {
     @FXML private TextField        tfNewCaseTitle, tfNewCaseSuspectIp, tfNewCaseSuspectMac;
     @FXML private ComboBox<String> cbNewCaseSeverity;
     @FXML private Label            lblCaseStatus;
+    @FXML private TabPane tabPane;
 
     // Settings / login
     @FXML private TextField      tfBackendUrl;
@@ -98,11 +102,13 @@ public class MainController implements Initializable {
     @FXML private PasswordField  pfPassword;
     @FXML private Label          lblLoginStatus;
 
-    // ── STATE ─────────────────────────────────────────────────────────────────
+    //STATE
     private BackendClient  backend;
     private LiveFeedClient wsFeed;
     private DataLoader     dataLoader;
     private AlertTableManager alertManager;
+    private IpInvestigationPanel investigationPanel;
+    private SplitPane mainSplitPane;
 
     private final ObservableList<AlertItem>        allAlerts      = FXCollections.observableArrayList();
     private final ObservableList<AlertItem>        attackers      = FXCollections.observableArrayList();
@@ -124,7 +130,7 @@ public class MainController implements Initializable {
                 return t;
             });
 
-    // ── INIT ──────────────────────────────────────────────────────────────────
+    //INIT
 
     @Override
     public void initialize(URL url, ResourceBundle rb) {
@@ -158,10 +164,10 @@ public class MainController implements Initializable {
         tfCaseFilterIp.textProperty().addListener((o, ov, nv)     -> applyCaseFilter());
 
         setStatus("Not connected", false);
+        setupInvestigationPanel();
     }
 
-    // ── TABLE SETUP ───────────────────────────────────────────────────────────
-
+    // TABLE SETUP
     private void setupWhitelistTables() {
         // My whitelist
         colMyWlIp     .setCellValueFactory(new PropertyValueFactory<>("ip"));
@@ -245,7 +251,7 @@ public class MainController implements Initializable {
         casesTable.setPlaceholder(new Label("No forensic cases opened yet."));
     }
 
-    // ── FILTER HELPERS ────────────────────────────────────────────────────────
+    //FILTER HELPERS
 
     private void applyWlFilter() {
         String f = tfFilterWlIp.getText().toLowerCase();
@@ -274,8 +280,7 @@ public class MainController implements Initializable {
         });
     }
 
-    // ── LOGIN ─────────────────────────────────────────────────────────────────
-
+    //LOGIN
     @FXML
     private void onLogin() {
         String user = tfUsername.getText().trim();
@@ -289,22 +294,22 @@ public class MainController implements Initializable {
         dataLoader = new DataLoader(backend);
 
         dataLoader.login(user, pass,
-                () -> {
-                    lblLoginStatus.setText("Logged in as " + user);
-                    lblUser.setText(user);
-                    setStatus("Connected", true);
-                    loadAllData();
-                    startLiveFeed();
-                    startPolling();
-                },
+        		() -> {
+        		    lblLoginStatus.setText("Logged in as " + user);
+        		    lblUser.setText(user);
+        		    setStatus("Connected", true);
+        		    investigationPanel.setBackend(backend);
+        		    loadAllData();
+        		    startLiveFeed();
+        		    startPolling();
+        		},
                 msg -> {
                     lblLoginStatus.setText("Connection failed: " + msg);
                     setStatus("Not connected", false);
                 });
     }
 
-    // ── DATA LOADING ──────────────────────────────────────────────────────────
-
+    //DATA LOADING
     private void loadAllData() {
         dataLoader.loadAlerts(this::onAlertsLoaded, this::updateStats,
                 msg -> setStatus("Alert load failed: " + msg, true));
@@ -320,8 +325,7 @@ public class MainController implements Initializable {
         alertManager.rebuildAttackers();
     }
 
-    // ── LIVE FEED ─────────────────────────────────────────────────────────────
-
+    //LIVE FEED
     private void startLiveFeed() {
         try {
             String wsUrl = BACKEND_URL
@@ -336,15 +340,11 @@ public class MainController implements Initializable {
     }
 
     private void onAlertReceived(JsonNode node) {
-        // FIX: node.path() returns MissingNode (never null), so .asText() with no
-        // argument is safe and returns "" for missing fields.
-        // The old code used .asText("?") which triggers the deprecated overload.
         String ts       = FMT.format(Instant.now());
         String severity = node.path("severity").asText();
         String type     = node.path("threatType").asText();
         String srcIp    = node.path("sourceIp").asText();
 
-        // Provide "?" display fallback only where empty string is unclear to user
         String severityDisplay = severity.isEmpty() ? "?" : severity;
         String typeDisplay     = type.isEmpty()     ? "?" : type;
         String srcIpDisplay    = srcIp.isEmpty()    ? "?" : srcIp;
@@ -375,7 +375,7 @@ public class MainController implements Initializable {
         });
     }
 
-    // ── POLLING ───────────────────────────────────────────────────────────────
+    //POLLING
 
     private void startPolling() {
         scheduler.scheduleAtFixedRate(() -> {
@@ -386,8 +386,7 @@ public class MainController implements Initializable {
         }, 30, 30, TimeUnit.SECONDS);
     }
 
-    // ── STATS ─────────────────────────────────────────────────────────────────
-
+    //STATS
     private void updateStats(JsonNode stats) {
         if (stats != null && stats.has("total")) {
             lblTotal   .setText(String.valueOf(stats.path("total")   .asInt()));
@@ -402,7 +401,7 @@ public class MainController implements Initializable {
         }
     }
 
-    // ── FXML ACTIONS ──────────────────────────────────────────────────────────
+    //FXML ACTIONS
 
     @FXML private void onClearFilters() { alertManager.clearFilters(); }
     @FXML private void onRefresh()      { if (isReady()) loadAllData(); }
@@ -518,9 +517,8 @@ public class MainController implements Initializable {
                 msg -> lblCaseStatus.setText("Failed: " + msg));
     }
 
-    // ── HELPERS ───────────────────────────────────────────────────────────────
-
-    private boolean isReady() { return backend != null && backend.isLoggedIn(); }
+   
+   private boolean isReady() { return backend != null && backend.isLoggedIn(); }
 
     private void setStatus(String msg, boolean connected) {
         lblStatus.setText(msg);
@@ -528,7 +526,7 @@ public class MainController implements Initializable {
             dotLive.setFill(connected ? Color.web("#22c55e") : Color.web("#ef4444"));
     }
 
-    // Reusable cell factories — removes ~40 lines of duplication
+ 
     private <T> TableCell<T, String> cyanCell() {
         return new TableCell<>() {
             @Override protected void updateItem(String s, boolean empty) {
@@ -582,7 +580,7 @@ public class MainController implements Initializable {
         };
     }
 
-    // ── WHITELIST CALLBACK ────────────────────────────────────────────────────
+    //WHITELIST CALLBACK
 
     private void onWhitelistLoaded(List<MyWhitelistItem> my,
                                     List<OrgWhitelistItem> org,
@@ -597,12 +595,88 @@ public class MainController implements Initializable {
         lblPendingOrgCount.setText("Pending Organizations — " + pending.size()  + " awaiting approval");
     }
 
-    // ── SHUTDOWN ──────────────────────────────────────────────────────────────
+    //SHUTDOWN
 
     public void shutdown() {
         scheduler.shutdownNow();
         try { scheduler.awaitTermination(2, TimeUnit.SECONDS); }
         catch (InterruptedException ignored) {}
         if (wsFeed != null) try { wsFeed.close(); } catch (Exception ignored) {}
+    }
+    private void setupInvestigationPanel() {
+        investigationPanel = new IpInvestigationPanel(backend, this::closeInvestigationPanel);
+        investigationPanel.setVisible(false);
+        investigationPanel.setManaged(false);
+
+        // Find the actual parent of the alert table and inject the panel there.
+        // Platform.runLater ensures the scene graph is fully built first.
+        Platform.runLater(() -> {
+            // Walk up to the first HBox or BorderPane that can accept a child
+            javafx.scene.layout.Pane root = findRootPane();
+            if (root instanceof HBox hbox) {
+                hbox.getChildren().add(investigationPanel);
+                HBox.setHgrow(investigationPanel, Priority.NEVER);
+            } else if (root instanceof BorderPane bp) {
+                bp.setRight(investigationPanel);
+            }
+        });
+
+        wireIpColumnClick();
+    }
+
+    private javafx.scene.layout.Pane findRootPane() {
+        javafx.scene.Node node = alertTable;
+        while (node.getParent() != null) {
+            if (node.getParent() instanceof HBox || node.getParent() instanceof BorderPane)
+                return (javafx.scene.layout.Pane) node.getParent();
+            node = node.getParent();
+        }
+        return (javafx.scene.layout.Pane) node; // fallback: scene root
+    }
+
+    // 3. Wire a click on the sourceIp column to open the investigation panel:
+    private void wireIpColumnClick() {
+    	colSourceIp.setCellFactory(col -> new TableCell<AlertItem, String>() {
+    	    @Override
+    	    protected void updateItem(String ip, boolean empty) {
+    	        super.updateItem(ip, empty);
+    	        if (empty || ip == null) {
+    	            setText(null);
+    	            setStyle("");
+    	            setOnMouseClicked(null);
+    	            return;
+    	        }
+    	        setText(ip);
+    	        setStyle("-fx-text-fill: #00d4ff; -fx-font-weight: bold; -fx-cursor: hand;"
+    	               + "-fx-underline: true;");
+    	        setOnMouseClicked(e -> openInvestigation(ip));
+    	    }
+    	});
+    	colAtkIp.setCellFactory(col -> new TableCell<AlertItem, String>() {
+    	    @Override
+    	    protected void updateItem(String ip, boolean empty) {
+    	        super.updateItem(ip, empty);
+    	        if (empty || ip == null) {
+    	            setText(null);
+    	            setStyle("");
+    	            setOnMouseClicked(null);
+    	            return;
+    	        }
+    	        setText(ip);
+    	        setStyle("-fx-text-fill: #00d4ff; -fx-font-weight: bold; -fx-cursor: hand;");
+    	        setOnMouseClicked(e -> openInvestigation(ip));
+    	    }
+    	});
+    	}
+    private void openInvestigation(String ip) {
+        if (!isReady() || ip == null || ip.isBlank()) return;
+        investigationPanel.setVisible(true);
+        investigationPanel.setManaged(true);
+        investigationPanel.investigate(ip);
+    }
+
+    private void closeInvestigationPanel() {
+        investigationPanel.setVisible(false);
+        investigationPanel.setManaged(false);
     }
 }

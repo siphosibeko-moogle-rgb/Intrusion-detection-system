@@ -13,6 +13,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     List<Alert> findBySourceIpOrderByTimestampDesc(String sourceIp);
     List<Alert> findBySourceMacOrderByTimestampDesc(String sourceMac);
     List<Alert> findByTimestampAfterOrderByTimestampDesc(Instant since);
+    List<Alert> findBySourceIpOrderByTimestampAsc(String sourceIp);
 
     @Query("SELECT a.threatType, COUNT(a) FROM Alert a GROUP BY a.threatType ORDER BY COUNT(a) DESC")
     List<Object[]> countByThreatType();

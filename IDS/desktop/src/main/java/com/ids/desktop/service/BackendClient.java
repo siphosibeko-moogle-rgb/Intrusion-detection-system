@@ -325,6 +325,12 @@ public class BackendClient {
             return s;
         }
     }
+    public JsonNode getIpProfile(String ip) throws Exception {
+        return mapper.readTree(get("/api/alerts/ip-profile/" + ip));
+    }
 
-    // Removed the stale getToken() TODO stub — it returned null and was unused.
+    public JsonNode getTimeline(String ip) throws Exception {
+        return mapper.readTree(get("/api/alerts/timeline/" + ip));
+    }
+
 }

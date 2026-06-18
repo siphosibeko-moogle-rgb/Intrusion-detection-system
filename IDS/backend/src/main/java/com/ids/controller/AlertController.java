@@ -17,6 +17,8 @@ import java.util.Map;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
+import com.ids.dto.AlertSummaryDTO;
+import com.ids.dto.IpProfileDTO;
 
 @RestController
 @RequestMapping("/api/alerts")
@@ -131,4 +133,22 @@ public class AlertController {
         }
         return ResponseEntity.ok(result);
     }
+    @GetMapping("/ip-profile/{ip}")
+    public ResponseEntity<?> ipProfile(@PathVariable String ip) {
+        IpProfileDTO profile = alertService.buildIpProfile(ip);
+        if (profile == null)
+            return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(profile);
+    }
+    public ResponseEntity<?> timeline(@PathVariable String ip) {
+        List<Alert> alerts = alertRepository.findBySourceIpOrderByTimestampAsc(ip);
+        List<AlertSummaryDTO> result = alerts.stream().map(a -> new AlertSummaryDTO(
+            a.getId(), a.getThreatType(), a.getSeverity(),
+            a.getSourceIp(), a.getDestIp(), a.getProtocol(),
+            a.getRequestType(), a.getDetails(),
+            a.getPacketCount(), a.getWindowMs(), a.getTimestamp()
+        )).toList();
+        return ResponseEntity.ok(result);
+    }
+    
 }

@@ -37,32 +37,19 @@ public class SecurityConfig {
 
             .authorizeHttpRequests(auth -> auth
 
-                // Public — no JWT needed
-                .requestMatchers(
-                    "/api/auth/login",
-                    "/api/auth/register",
-                    "/actuator/**"
-                ).permitAll()
+            	    // Public — no JWT required
+            	    .requestMatchers(
+            	        "/api/auth/login",
+            	        "/api/auth/register",
+            	        "/actuator/**",
+            	        "/api/alerts/ingest",    // engine uses X-Engine-Key, validated in controller
+            	        "/api/my-whitelist",
+            	        "/ws/**"
+            	    ).permitAll()
 
-                // Engine ingest — uses X-Engine-Key header, not JWT.
-                // The controller validates the key itself.
-                // WHY permit here: the engine process has no user session —
-                // it authenticates via a shared secret, not a JWT token.
-                .requestMatchers(
-                	    "/api/auth/login",
-                	    "/api/auth/register", 
-                	    "/actuator/**",
-                	    "/api/alerts/ingest",
-                	    "/api/my-whitelist"      // ← add this
-                	).permitAll()
-
-                // WebSocket handshake endpoint — must be permit-all
-                // because the WS upgrade happens before auth is established.
-                .requestMatchers("/ws/**").permitAll()
-
-                // Everything else requires a valid JWT
-                .anyRequest().authenticated()
-            )
+            	    // Everything else requires a valid JWT
+            	    .anyRequest().authenticated()
+            	)
 
             .addFilterBefore(
                 jwtFilter,
