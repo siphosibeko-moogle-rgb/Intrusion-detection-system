@@ -9,18 +9,23 @@ import com.ids.models.PacketContext;
 
 import org.pcap4j.core.*;
 import org.pcap4j.core.BpfProgram.BpfCompileMode;
+import org.pcap4j.core.PcapNetworkInterface.PromiscuousMode;
 import org.pcap4j.packet.Packet;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * IDS Engine — orchestrates all detectors over live Pcap4J packet capture.
  *
- * Usage: sudo java -jar ids-engine.jar [interface] [backend-url]
- * Example: sudo java -jar ids-engine.jar eth0 http://localhost:8080
+ * FIX: Now supports multi-interface capture so Docker bridge traffic is visible.
+ *
+ * Usage: sudo java -jar ids-engine.jar [interface|all|iface1,iface2] [backend-url]
+ * Example: sudo java -jar ids-engine.jar all http://localhost:8080
+ * Example: sudo java -jar ids-engine.jar wlp1s0,br-64344a8a0f32 http://localhost:8080
  *
  * Required environment variables:
  *   IDS_ENGINE_USER  — backend login username (default: admin)
@@ -34,46 +39,45 @@ public class IDSEngine {
     private static final String LOG_FILE   = "/app/logs/ids-alerts.log";
 
     // ── Detectors ────────────────────────────────────────────────────────────
-    private IcmpAbuseDetector            icmpDetector;
-    private NmapScanDetector             nmapDetector;
-    private WhitelistViolationDetector   whitelistDetector;
-    private ArpSpoofingDetector          arpDetector;
-    private DnsTunnelingDetector         dnsDetector;
-    private DataExfiltrationDetector     exfilDetector;
-    private AfterHoursDetector           afterHoursDetector;
-    private BruteForceDetector           bruteForceDetector;
-    private BeaconingDetector            beaconingDetector;
-    private LateralMovementDetector      lateralMovementDetector;
-    private HttpAnomalyDetector          httpAnomalyDetector;
-    private RogueDHCPDetector            rogueDhcpDetector;
-    private FileTransferDetector         fileTransferDetector;
-    private DataStagingDetector          dataStagingDetector;
-    private UserBehaviorAnomalyDetector  ubaDetector;
-    private LowAndSlowScanDetector       lowSlowDetector;
-    private PortKnockingDetector         portKnockingDetector;
-    private SqlInjectionDetector sqlInjectionDetector;
-    private SynFloodDetector synFloodDetector;
+    private IcmpAbuseDetector           icmpDetector;
+    private NmapScanDetector            nmapDetector;
+    private WhitelistViolationDetector  whitelistDetector;
+    private ArpSpoofingDetector         arpDetector;
+    private DnsTunnelingDetector        dnsDetector;
+    private DataExfiltrationDetector    exfilDetector;
+    private AfterHoursDetector          afterHoursDetector;
+    private BruteForceDetector          bruteForceDetector;
+    private BeaconingDetector           beaconingDetector;
+    private LateralMovementDetector     lateralMovementDetector;
+    private HttpAnomalyDetector         httpAnomalyDetector;
+    private RogueDHCPDetector           rogueDhcpDetector;
+    private FileTransferDetector        fileTransferDetector;
+    private DataStagingDetector         dataStagingDetector;
+    private UserBehaviorAnomalyDetector ubaDetector;
+    private LowAndSlowScanDetector      lowSlowDetector;
+    private PortKnockingDetector        portKnockingDetector;
+    private SqlInjectionDetector        sqlInjectionDetector;
+    private SynFloodDetector            synFloodDetector;
 
     private final List<Detector> detectors = new ArrayList<>();
 
-    private AlertManager      alertManager;
-    private NetworkWhitelist  whitelist;
-    private PcapHandle        pcapHandle;
-    private Thread            alertThread;
-    private String            backendToken;
+    private AlertManager     alertManager;
+    private NetworkWhitelist whitelist;
+    private Thread           alertThread;
+    private String           backendToken;
 
-    // FIX 1 — AtomicLong counter replaces per-drop stderr logging.
-    // Reported every 5 minutes by the scheduler instead of spamming stderr
-    // on every dropped packet under load.
-    private final AtomicLong droppedPackets = new AtomicLong(0);
-
-    // FIX 2 — ObjectMapper lives here so loginToBackend() can use it for
-    // safe JWT extraction. Jackson is already on the classpath via AlertManager.
-    private final ObjectMapper mapper = new ObjectMapper();
+    // ── FIX: Multiple capture handles, one per interface ─────────────────────
+    // Previously: single PcapHandle pcapHandle (only captured one interface).
+    // Now: one handle per relevant interface, each with its own capture thread.
+    private final List<PcapHandle> captureHandles = new CopyOnWriteArrayList<>();
 
     // ── Packet queue ─────────────────────────────────────────────────────────
+    // All capture threads push here; drain workers pop and process.
     private final BlockingQueue<Packet> packetQueue = new ArrayBlockingQueue<>(10_000);
-    private final ExecutorService       workers     = Executors.newFixedThreadPool(2, r -> {
+
+    // FIX: Use CachedThreadPool so we can scale to N capture threads + M drain
+    // threads without knowing N at startup. Threads are long-lived, not churned.
+    private final ExecutorService workers = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "ids-worker");
         t.setDaemon(false);
         return t;
@@ -82,16 +86,21 @@ public class IDSEngine {
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor();
 
+    private final AtomicLong droppedPackets = new AtomicLong(0);
+    private final ObjectMapper mapper = new ObjectMapper();
+
     // ── Entry point ──────────────────────────────────────────────────────────
 
     public static void main(String[] args) throws Exception {
         printBanner();
-        String iface   = args.length > 0 ? args[0] : null;
+        // args[0] = interface name(s) or "all" — default "all"
+        // args[1] = backend URL                — default http://localhost:8080
+        String iface   = args.length > 0 ? args[0] : "all";
         String backend = args.length > 1 ? args[1] : "http://localhost:8080";
         new IDSEngine().start(iface, backend);
     }
 
-    public void start(String ifaceName, String backendUrl) throws Exception {
+    public void start(String ifaceArg, String backendUrl) throws Exception {
 
         // 1. Authenticate
         this.backendToken = loginToBackend(backendUrl);
@@ -104,9 +113,6 @@ public class IDSEngine {
 
         // 3. Whitelist — needs token from step 1
         whitelist = new NetworkWhitelist(backendUrl, backendToken);
-        // NOTE: startAutoRefresh() starts its own internal timer.
-        // We do NOT also schedule whitelist::refresh in the scheduler below
-        // to avoid double-refresh race conditions.
         scheduler.scheduleAtFixedRate(whitelist::refresh, 30, 30, TimeUnit.SECONDS);
 
         // 4. All detectors
@@ -114,35 +120,27 @@ public class IDSEngine {
 
         icmpDetector            = new IcmpAbuseDetector(alertManager);
         nmapDetector            = new NmapScanDetector(alertManager);
-        whitelistDetector       = new WhitelistViolationDetector(
-                                        alertManager, whitelist, subnet);
-        arpDetector             = new ArpSpoofingDetector(
-                                        alertManager, whitelist.getGateway());
+        whitelistDetector       = new WhitelistViolationDetector(alertManager, whitelist, subnet);
+        arpDetector             = new ArpSpoofingDetector(alertManager, whitelist.getGateway());
         dnsDetector             = new DnsTunnelingDetector(alertManager);
-        exfilDetector           = new DataExfiltrationDetector(
-                                        alertManager, subnet,
-                                        whitelist.getInternalServers());
-        afterHoursDetector      = new AfterHoursDetector(
-                                        alertManager, subnet,
-                                        whitelist.getWorkStartHour(),
-                                        whitelist.getWorkEndHour(),
-                                        whitelist.getWorkTimezone(),
-                                        whitelist.isWeekendAlert());
+        exfilDetector           = new DataExfiltrationDetector(alertManager, subnet,
+                                          whitelist.getInternalServers());
+        afterHoursDetector      = new AfterHoursDetector(alertManager, subnet,
+                                          whitelist.getWorkStartHour(), whitelist.getWorkEndHour(),
+                                          whitelist.getWorkTimezone(), whitelist.isWeekendAlert());
         bruteForceDetector      = new BruteForceDetector(alertManager, subnet);
         beaconingDetector       = new BeaconingDetector(alertManager);
         lateralMovementDetector = new LateralMovementDetector(alertManager, subnet);
         httpAnomalyDetector     = new HttpAnomalyDetector(alertManager);
-        rogueDhcpDetector       = new RogueDHCPDetector(
-                                        alertManager, whitelist.getGateway());
-        fileTransferDetector    = new FileTransferDetector(
-                                        alertManager, subnet,
-                                        whitelist.getInternalServers());
+        rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist.getGateway());
+        fileTransferDetector    = new FileTransferDetector(alertManager, subnet,
+                                          whitelist.getInternalServers());
         dataStagingDetector     = new DataStagingDetector(alertManager, subnet);
         ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, subnet);
         lowSlowDetector         = new LowAndSlowScanDetector(alertManager);
         portKnockingDetector    = new PortKnockingDetector(alertManager);
-        sqlInjectionDetector = new SqlInjectionDetector(alertManager);
-        synFloodDetector = new SynFloodDetector(alertManager);
+        sqlInjectionDetector    = new SqlInjectionDetector(alertManager);
+        synFloodDetector        = new SynFloodDetector(alertManager);
 
         detectors.add(icmpDetector);
         detectors.add(nmapDetector);
@@ -163,7 +161,6 @@ public class IDSEngine {
         detectors.add(portKnockingDetector);
         detectors.add(sqlInjectionDetector);
         detectors.add(synFloodDetector);
-        
 
         // 5. Config summary
         System.out.println("Subnet:  " + subnet);
@@ -171,42 +168,280 @@ public class IDSEngine {
         System.out.println("Backend: " + backendUrl);
         System.out.println("Log:     " + LOG_FILE);
 
-        // 6. Open pcap interface
-        PcapNetworkInterface iface = resolveInterface(ifaceName);
-        System.out.println("\n[IDS] Interface : " + iface.getName());
-        iface.getAddresses().stream()
-            .filter(a -> a.getAddress() != null)
-            .forEach(a -> System.out.println("[IDS] Address   : "
-                + a.getAddress().getHostAddress()));
+        // 6. FIX: Open ALL relevant interfaces, not just one.
+        //
+        //    Previously: resolveInterface(name) returned ONE iface.
+        //    Problem:    fallback picked wlp1s0 (WiFi) which has no Docker bridge traffic.
+        //    Fix:        resolveInterfaces() returns a list. Each gets its own PcapHandle
+        //                and its own capture thread. All push into the shared packetQueue.
+        List<PcapNetworkInterface> targets = resolveInterfaces(ifaceArg);
 
-        pcapHandle = iface.openLive(SNAP_LEN,
-            PcapNetworkInterface.PromiscuousMode.PROMISCUOUS, TIMEOUT_MS);
-        pcapHandle.setFilter(BPF_FILTER, BpfCompileMode.OPTIMIZE);
+        System.out.println("\n[IDS] Capturing on " + targets.size() + " interface(s):");
+        for (PcapNetworkInterface iface : targets) {
+            PcapHandle handle = iface.openLive(SNAP_LEN, PromiscuousMode.PROMISCUOUS, TIMEOUT_MS);
+            handle.setFilter(BPF_FILTER, BpfCompileMode.OPTIMIZE);
+            captureHandles.add(handle);
 
-        System.out.println("\n[IDS]LIVE CAPTURE STARTED\n");
+            // Log each interface and its addresses for confirmation
+            System.out.printf("  [+] %-20s", iface.getName());
+            String addrs = iface.getAddresses().stream()
+                .filter(a -> a.getAddress() != null)
+                .map(a -> a.getAddress().getHostAddress())
+                .collect(Collectors.joining(", "));
+            System.out.println(addrs.isEmpty() ? "(no IP)" : addrs);
+        }
+        System.out.println("\n[IDS] LIVE CAPTURE STARTED\n");
 
-        // 7. Start worker threads
+        // 7. Start drain (process) workers — 2 threads consume from the queue
         workers.submit(this::drainQueue);
         workers.submit(this::drainQueue);
 
-        // 8. Periodic tasks.
-        //    - cleanup()       : evicts stale per-IP state from all detectors
-        //    - reportDrops()   : logs how many packets were dropped (not per-drop)
-        //    whitelist refresh is handled by startAutoRefresh() above — NOT here.
+        // 8. Start one capture thread per interface.
+        //    Each thread runs pcapHandle.loop(-1, ...) which blocks until interrupted.
+        //    They all push packets into the shared queue via enqueue().
+        for (PcapHandle handle : captureHandles) {
+            workers.submit(() -> runCaptureLoop(handle));
+        }
+
+        // 9. Periodic tasks
         scheduler.scheduleAtFixedRate(this::cleanup,      5,  5, TimeUnit.MINUTES);
         scheduler.scheduleAtFixedRate(this::reportDrops,  1,  1, TimeUnit.MINUTES);
 
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "Shutdown"));
 
-        // 9. Capture loop
+        // 10. Block the main thread until interrupted.
+        //     The actual capture runs on worker threads now.
         try {
-            pcapHandle.loop(-1, (PacketListener) this::enqueue);
+            Thread.currentThread().join();
         } catch (InterruptedException e) {
-            System.out.println("\n[IDS] Capture interrupted.");
+            System.out.println("\n[IDS] Main thread interrupted.");
         }
     }
 
-    // ── Credentials from environment — never hardcoded ───────────────────────
+    // ── Interface resolution ─────────────────────────────────────────────────
+
+    /**
+     * Resolves which interfaces to capture on.
+     *
+     * Input forms:
+     *   "all"            → all relevant non-loopback interfaces (auto-detect)
+     *   "eth0"           → only eth0
+     *   "wlp1s0,docker0" → exactly those two
+     *   null             → same as "all"
+     *
+     * "Relevant" means: physical (eth*, wlp*, enp*, enx*, ens*),
+     * Docker bridge (docker0, br-*), or veth pairs.
+     *
+     * Why not capture veth* separately?
+     * Docker bridge already mirrors all veth traffic — capturing veth* would
+     * double-count every packet. We skip them by default.
+     *
+     * Why not use the "any" pseudo-interface?
+     * pcap "any" uses Linux Cooked Capture (SLL) which has no Ethernet header.
+     * Our PacketParser.parse() calls packet.get(EthernetPacket.class) which would
+     * return null for all packets, losing MAC addresses and breaking ARP detection.
+     * Per-interface capture preserves full Ethernet frames.
+     */
+    private List<PcapNetworkInterface> resolveInterfaces(String arg)
+            throws PcapNativeException {
+
+        List<PcapNetworkInterface> all = Pcaps.findAllDevs();
+        if (all == null || all.isEmpty())
+            throw new RuntimeException("No network interfaces found — run as root/sudo");
+
+        // Explicit list: "wlp1s0,br-64344a8a0f32"
+        if (arg != null && !arg.equalsIgnoreCase("all")) {
+            String[] names = arg.split(",");
+            List<PcapNetworkInterface> result = new ArrayList<>();
+            for (String name : names) {
+                String trimmed = name.trim();
+                for (PcapNetworkInterface i : all) {
+                    if (i.getName().equalsIgnoreCase(trimmed)) {
+                        result.add(i);
+                        break;
+                    }
+                }
+                // Warn but don't crash if a named interface is missing
+                boolean found = result.stream()
+                    .anyMatch(i -> i.getName().equalsIgnoreCase(trimmed));
+                if (!found) {
+                    System.out.println("[IDS] WARNING: Interface '" + trimmed + "' not found — skipping.");
+                }
+            }
+            if (!result.isEmpty()) return result;
+            System.out.println("[IDS] No matching interfaces found. Falling back to auto-detect.");
+        }
+
+        // Auto-detect all relevant non-loopback interfaces
+        List<PcapNetworkInterface> result = new ArrayList<>();
+        for (PcapNetworkInterface i : all) {
+            if (i.isLoopBack()) continue;
+            String name = i.getName();
+            boolean isPhysical = name.startsWith("eth")  || name.startsWith("wlp")
+                              || name.startsWith("enp")  || name.startsWith("enx")
+                              || name.startsWith("ens")  || name.startsWith("wlan");
+            boolean isDockerBridge = name.startsWith("docker") || name.startsWith("br-");
+            // Note: we intentionally skip veth* — the bridge interface already
+            // sees all veth traffic. Capturing veth too would double every packet.
+            if (isPhysical || isDockerBridge) {
+                result.add(i);
+            }
+        }
+
+        if (!result.isEmpty()) return result;
+
+        // Last resort: everything non-loopback
+        System.out.println("[IDS] WARNING: No standard interfaces found — capturing all non-loopback.");
+        return all.stream().filter(i -> !i.isLoopBack()).collect(Collectors.toList());
+    }
+
+    // ── Capture loop (one per interface) ────────────────────────────────────
+
+    /**
+     * Runs on a dedicated worker thread. Blocks until the handle is closed.
+     *
+     * This is the same logic the old single-interface loop used, extracted into
+     * a method so multiple threads can each own one handle.
+     */
+    private void runCaptureLoop(PcapHandle handle) {
+        try {
+            handle.loop(-1, (PacketListener) this::enqueue);
+        } catch (PcapNativeException | NotOpenException e) {
+            System.err.println("[ENGINE] Capture error on " + handle + ": " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // ── Packet queue ─────────────────────────────────────────────────────────
+
+    private void enqueue(Packet packet) {
+        if (packet == null) return;
+        if (!packetQueue.offer(packet)) {
+            droppedPackets.incrementAndGet();
+        }
+    }
+
+    private void reportDrops() {
+        long dropped = droppedPackets.getAndSet(0);
+        if (dropped > 0) {
+            System.err.println("[ENGINE] Dropped " + dropped
+                + " packets in the last minute — consider tuning queue size or worker count.");
+        }
+    }
+
+    // ── Worker thread ────────────────────────────────────────────────────────
+
+    private void drainQueue() {
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                Packet packet = packetQueue.poll(100, TimeUnit.MILLISECONDS);
+                if (packet != null) process(packet);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Routes every captured packet through all detectors.
+     * Runs on drain worker threads, not the pcap capture threads.
+     */
+    private void process(Packet packet) {
+        if (packet == null) return;
+        try {
+            PacketContext ctx = PacketParser.parse(packet);
+            String proto = ctx.getProtocol();
+
+            // ARP path — runs before whitelist gate to maintain device state
+            if ("ARP".equalsIgnoreCase(proto)) {
+                whitelistDetector.analyzeArp(packet);
+                arpDetector.analyze(packet);
+                return;
+            }
+
+            byte[] udpPayload = null;
+            if ("UDP".equalsIgnoreCase(proto)) {
+                udpPayload = extractUdpPayload(packet);
+            }
+
+            // Global whitelist gate — trusted source IPs skip behavioral detectors
+            if (whitelist.isTrusted(ctx.getSrcIp())) return;
+
+            // Behavioral detectors
+            icmpDetector.analyze(ctx);
+            nmapDetector.analyze(ctx);
+            dnsDetector.analyze(ctx, udpPayload);
+            afterHoursDetector.analyze(ctx);
+            whitelistDetector.analyze(ctx);
+            exfilDetector.analyze(ctx);
+            bruteForceDetector.analyze(ctx);
+            portKnockingDetector.analyze(ctx);
+            beaconingDetector.analyze(ctx);
+            lateralMovementDetector.analyze(ctx);
+            dataStagingDetector.analyze(ctx);
+            ubaDetector.analyze(ctx);
+            lowSlowDetector.analyze(ctx);
+            synFloodDetector.analyze(ctx);
+
+            if ("TCP".equalsIgnoreCase(proto)) {
+                String httpPayload = extractHttpPayload(packet);
+                sqlInjectionDetector.analyze(ctx, httpPayload);
+                httpAnomalyDetector.analyze(ctx, httpPayload);
+                fileTransferDetector.analyze(ctx, httpPayload);
+            }
+
+            if ("UDP".equalsIgnoreCase(proto)) {
+                // FIX: was called TWICE — roguedhcpDetector.analyze() was invoked with
+                // extractUdpPayload(packet) AND udpPayload in the same block,
+                // causing every DHCP packet to be analyzed twice → double alerts.
+                // Now called exactly once using the already-extracted udpPayload.
+                rogueDhcpDetector.analyze(ctx, udpPayload);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[ENGINE] process() error: "
+                + e.getClass().getSimpleName() + " — " + e.getMessage());
+        }
+    }
+
+    private String extractHttpPayload(Packet packet) {
+        try {
+            org.pcap4j.packet.TcpPacket tcp =
+                    packet.get(org.pcap4j.packet.TcpPacket.class);
+
+            if (tcp == null || tcp.getPayload() == null) return null;
+
+            byte[] raw = tcp.getPayload().getRawData();
+            if (raw == null || raw.length < 4) return null;
+
+            String text = new String(raw, java.nio.charset.StandardCharsets.UTF_8);
+
+            if (text.startsWith("GET ")     || text.startsWith("POST ")
+                    || text.startsWith("PUT ")    || text.startsWith("DELETE ")
+                    || text.startsWith("HEAD ")   || text.startsWith("OPTIONS ")
+                    || text.startsWith("PATCH ")  || text.startsWith("TRACE ")
+                    || text.startsWith("CONNECT ")) {
+                return text;
+            }
+
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private byte[] extractUdpPayload(Packet packet) {
+        try {
+            org.pcap4j.packet.UdpPacket udp =
+                    packet.get(org.pcap4j.packet.UdpPacket.class);
+
+            if (udp == null || udp.getPayload() == null) return null;
+            return udp.getPayload().getRawData();
+
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    // ── Auth ─────────────────────────────────────────────────────────────────
 
     private String loginToBackend(String backendUrl) {
         String username = System.getenv().getOrDefault("IDS_ENGINE_USER", "admin");
@@ -232,10 +467,6 @@ public class IDSEngine {
                 java.net.http.HttpResponse.BodyHandlers.ofString());
 
             if (res.statusCode() == 200) {
-                // FIX 3 — Use Jackson to parse the token safely.
-                // The old regex: replaceAll(".*\"token\"...", "$1") would silently
-                // return the ENTIRE response body if it didn't match, causing every
-                // subsequent backend call to send "Bearer {full JSON}" as the header.
                 JsonNode root = mapper.readTree(res.body());
                 String token = root.path("token").asText();
                 if (token.isEmpty()) {
@@ -250,7 +481,6 @@ public class IDSEngine {
                     + " — " + res.body());
             }
         } catch (RuntimeException e) {
-            // Re-throw our own exceptions (token missing, bad config) as-is
             throw e;
         } catch (Exception e) {
             System.err.println("[IDS] Backend auth error: " + e.getMessage());
@@ -258,137 +488,7 @@ public class IDSEngine {
         return null;
     }
 
-    // ── Packet queue ─────────────────────────────────────────────────────────
-
-    private void enqueue(Packet packet) {
-        if (packet == null) return;
-        // FIX 1b — offer() once. If full, increment counter. No stderr spam.
-        // The old code called offer() twice, inserting every packet double
-        // into the queue when it had space, and logging to stderr when full.
-        if (!packetQueue.offer(packet)) {
-            droppedPackets.incrementAndGet();
-        }
-    }
-
-    private void reportDrops() {
-        long dropped = droppedPackets.getAndSet(0);
-        if (dropped > 0) {
-            System.err.println("[ENGINE] Dropped " + dropped
-                + " packets in the last minute — consider tuning queue size or worker count.");
-        }
-    }
-
-    // ── Worker thread ─────────────────────────────────────────────────────────
-
-    private void drainQueue() {
-        while (!Thread.currentThread().isInterrupted()) {
-            try {
-                Packet packet = packetQueue.poll(100, TimeUnit.MILLISECONDS);
-                if (packet != null) process(packet);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
-    /**
-     * Routes every captured packet through all detectors.
-     * Runs on worker threads, not the pcap capture thread.
-     */
-    private void process(Packet packet) {
-        if (packet == null) return;
-        try {
-            PacketContext ctx = PacketParser.parse(packet);
-            String proto = ctx.getProtocol();
-
-            // ARP path — runs before whitelist gate to maintain device state
-            if ("ARP".equalsIgnoreCase(proto)) {
-                whitelistDetector.analyzeArp(packet);
-                arpDetector.analyze(packet);
-                return;
-            }
-            byte[] udpPayload = null;
-            if ("UDP".equalsIgnoreCase(proto)) {
-                udpPayload = extractUdpPayload(packet);
-            }
-
-            // Global whitelist gate — trusted source IPs skip all behavioral detectors
-            if (whitelist.isTrusted(ctx.getSrcIp())) return;
-
-            // All behavioral detectors
-            icmpDetector.analyze(ctx);
-            nmapDetector.analyze(ctx);
-            dnsDetector.analyze(ctx, udpPayload);
-            afterHoursDetector.analyze(ctx);
-            whitelistDetector.analyze(ctx);
-            exfilDetector.analyze(ctx);
-            bruteForceDetector.analyze(ctx);
-            portKnockingDetector.analyze(ctx);
-            beaconingDetector.analyze(ctx);
-            lateralMovementDetector.analyze(ctx);
-            dataStagingDetector.analyze(ctx);
-            ubaDetector.analyze(ctx);
-            lowSlowDetector.analyze(ctx);
-
-            if ("TCP".equalsIgnoreCase(proto)) {
-                String httpPayload = extractHttpPayload(packet);
-                sqlInjectionDetector.analyze(ctx, httpPayload);
-                httpAnomalyDetector.analyze(ctx, httpPayload);
-                fileTransferDetector.analyze(ctx, httpPayload);
-            }
-
-            if ("UDP".equalsIgnoreCase(proto)) {
-                rogueDhcpDetector.analyze(ctx, extractUdpPayload(packet));
-                rogueDhcpDetector.analyze(ctx, udpPayload);
-            }
-
-        } catch (Exception e) {
-            System.err.println("[ENGINE] process() error: "
-                + e.getClass().getSimpleName() + " — " + e.getMessage());
-        }
-    }
-
-    private String extractHttpPayload(Packet packet) {
-        try {
-            org.pcap4j.packet.TcpPacket tcp =
-                    packet.get(org.pcap4j.packet.TcpPacket.class);
-
-            if (tcp == null || tcp.getPayload() == null) return null;
-
-            byte[] raw = tcp.getPayload().getRawData();
-            if (raw == null || raw.length < 4) return null;
-
-            String text = new String(raw, java.nio.charset.StandardCharsets.UTF_8);
-
-            if (text.startsWith("GET ")
-                    || text.startsWith("POST ")
-                    || text.startsWith("PUT ")
-                    || text.startsWith("DELETE ")
-                    || text.startsWith("HEAD ")
-                    || text.startsWith("OPTIONS ")
-                    || text.startsWith("PATCH ")
-                    || text.startsWith("TRACE ")
-                    || text.startsWith("CONNECT ")) {
-                return text;
-            }
-
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    private byte[] extractUdpPayload(Packet packet) {
-        try {
-            org.pcap4j.packet.UdpPacket udp =
-                    packet.get(org.pcap4j.packet.UdpPacket.class);
-
-            if (udp == null || udp.getPayload() == null) return null;
-            return udp.getPayload().getRawData();
-
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    // ── Cleanup ───────────────────────────────────────────────────────────────
+    // ── Cleanup ──────────────────────────────────────────────────────────────
 
     private void cleanup() {
         detectors.forEach(Detector::cleanup);
@@ -398,34 +498,20 @@ public class IDSEngine {
         System.out.println("\n[IDS] Shutting down...");
         scheduler.shutdownNow();
         workers.shutdownNow();
-        if (pcapHandle != null && pcapHandle.isOpen()) {
-            try { pcapHandle.breakLoop(); } catch (NotOpenException ignored) {}
-            pcapHandle.close();
+        // Close all capture handles — this causes each runCaptureLoop() to return
+        for (PcapHandle handle : captureHandles) {
+            if (handle != null && handle.isOpen()) {
+                try { handle.breakLoop(); } catch (NotOpenException ignored) {}
+                handle.close();
+            }
         }
         alertManager.stop();
         if (alertThread != null) {
-            try {
-                alertThread.join(5_000);
-            } catch (InterruptedException ignored) {}
+            try { alertThread.join(5_000); } catch (InterruptedException ignored) {}
         }
-        System.out.println("[IDS] Total alerts: " + alertManager.getTotalAlerts());
+        System.out.println("[IDS] Total alerts:  " + alertManager.getTotalAlerts());
         System.out.println("[IDS] Dropped total: " + droppedPackets.get());
         System.out.println("[IDS] Log: " + LOG_FILE);
-    }
-
-    private PcapNetworkInterface resolveInterface(String name) throws PcapNativeException {
-        List<PcapNetworkInterface> ifaces = Pcaps.findAllDevs();
-        if (ifaces == null || ifaces.isEmpty())
-            throw new RuntimeException("No network interfaces found — run as root/sudo");
-        if (name != null) {
-            for (PcapNetworkInterface i : ifaces)
-                if (i.getName().equalsIgnoreCase(name)) return i;
-            System.out.println("[IDS] Interface '" + name + "' not found. Available:");
-            ifaces.forEach(i -> System.out.println("  - " + i.getName()));
-        }
-        for (PcapNetworkInterface i : ifaces)
-            if (!i.isLoopBack() && !i.getAddresses().isEmpty()) return i;
-        return ifaces.get(0);
     }
 
     private static void printBanner() {

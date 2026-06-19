@@ -18,7 +18,27 @@ public class NetworkWhitelist {
     private String  timezone     = "Africa/Johannesburg";
     private boolean weekendAlert = true;
 
-    // Single shared client — not recreated on every refresh
+    // FIX: subnet and gateway were hardcoded to "192.168.8." and "192.168.8.1".
+    //
+    // Why this was a bug:
+    //   Docker containers run on 172.17.x.x or 172.18.x.x by default.
+    //   Detectors that check if (srcIp.startsWith(subnet)) to identify "internal"
+    //   traffic would NEVER match Docker IPs, misclassifying all container traffic
+    //   as external. This affected DataExfiltrationDetector, BruteForceDetector,
+    //   LateralMovementDetector, AfterHoursDetector, and DataStagingDetector.
+    //
+    // Fix: read from ids-whitelist.properties. Defaults still work for home labs
+    //      but can be overridden. For a Docker environment with multiple subnets,
+    //      the subnet prefix should cover the bridge network.
+    //
+    // Example ids-whitelist.properties entries:
+    //   network.subnet=192.168.8.
+    //   network.gateway=192.168.8.1
+    //   network.docker.subnets=172.17.0.,172.18.0.,172.19.0.
+    private String       subnet         = "192.168.8.";
+    private String       gateway        = "192.168.8.1";
+    private List<String> dockerSubnets  = new ArrayList<>();
+
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .build();
@@ -63,8 +83,27 @@ public class NetworkWhitelist {
             workEnd      = Integer.parseInt(p.getProperty("work.hours.end",   "18"));
             timezone     = p.getProperty("work.timezone", "Africa/Johannesburg");
             weekendAlert = Boolean.parseBoolean(p.getProperty("work.weekend.alert", "true"));
+
+            // FIX: read subnet and gateway from properties instead of hardcoding
+            subnet  = p.getProperty("network.subnet",  "192.168.8.");
+            gateway = p.getProperty("network.gateway", "192.168.8.1");
+
+            // FIX: support multiple subnets for Docker environments
+            // Property: network.docker.subnets=172.17.0.,172.18.0.
+            String dockerSubnetsProp = p.getProperty("network.docker.subnets", "");
+            if (!dockerSubnetsProp.isBlank()) {
+                for (String s : dockerSubnetsProp.split(",")) {
+                    String trimmed = s.trim();
+                    if (!trimmed.isEmpty()) dockerSubnets.add(trimmed);
+                }
+            }
+
             System.out.println("[Whitelist] Properties loaded — work hours: "
                 + workStart + ":00–" + workEnd + ":00 (" + timezone + ")");
+            System.out.println("[Whitelist] Subnet: " + subnet + "  Gateway: " + gateway);
+            if (!dockerSubnets.isEmpty())
+                System.out.println("[Whitelist] Docker subnets: " + dockerSubnets);
+
         } catch (Exception e) {
             System.err.println("[Whitelist] Could not load properties: " + e.getMessage());
         }
@@ -156,6 +195,23 @@ public class NetworkWhitelist {
         return approvedOrgIps.contains(normalize(ip));
     }
 
+    /**
+     * FIX: isInternal() now considers both the primary subnet AND Docker subnets.
+     *
+     * Previously there was no isInternal() method — each detector did its own
+     * startsWith(subnet) check. This centralizes the logic and makes Docker
+     * container IPs (172.x.x.x) correctly classified as internal when configured.
+     */
+    public boolean isInternal(String ip) {
+        if (ip == null) return false;
+        String n = normalize(ip);
+        if (n.startsWith(subnet)) return true;
+        for (String dockerSubnet : dockerSubnets) {
+            if (n.startsWith(dockerSubnet)) return true;
+        }
+        return false;
+    }
+
     public void addTrustedIp(String ip) {
         if (ip != null && !ip.isBlank()) trustedIps.add(normalize(ip));
     }
@@ -175,6 +231,7 @@ public class NetworkWhitelist {
             .replaceAll("^/", "")
             .replaceAll(":.*$", "");
     }
+
     public void startAutoRefresh(long intervalSeconds) {
         java.util.concurrent.Executors
             .newSingleThreadScheduledExecutor(r -> {
@@ -191,14 +248,14 @@ public class NetworkWhitelist {
             }, intervalSeconds, intervalSeconds, java.util.concurrent.TimeUnit.SECONDS);
     }
 
-    public String  getGateway()          { return "192.168.8.1"; }
-    public String  getSubnet()           { return "192.168.8."; }
+    public String  getGateway()        { return gateway; }
+    public String  getSubnet()         { return subnet; }
     public List<String> getInternalServers() { return new ArrayList<>(); }
-    public int     getWorkStartHour()    { return workStart; }
-    public int     getWorkEndHour()      { return workEnd; }
-    public String  getWorkTimezone()     { return timezone; }
-    public boolean isWeekendAlert()      { return weekendAlert; }
-    public int     getWorkStart()        { return workStart; }
-    public int     getWorkEnd()          { return workEnd; }
+    public int     getWorkStartHour()  { return workStart; }
+    public int     getWorkEndHour()    { return workEnd; }
+    public String  getWorkTimezone()   { return timezone; }
+    public boolean isWeekendAlert()    { return weekendAlert; }
+    public int     getWorkStart()      { return workStart; }
+    public int     getWorkEnd()        { return workEnd; }
     public void    addTrusted(String ip, Object ignored) { addTrustedIp(ip); }
 }
