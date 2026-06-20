@@ -18,19 +18,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
-/**
- * IDS Engine — orchestrates all detectors over live Pcap4J packet capture.
- *
- * FIX: Now supports multi-interface capture so Docker bridge traffic is visible.
- *
- * Usage: sudo java -jar ids-engine.jar [interface|all|iface1,iface2] [backend-url]
- * Example: sudo java -jar ids-engine.jar all http://localhost:8080
- * Example: sudo java -jar ids-engine.jar wlp1s0,br-64344a8a0f32 http://localhost:8080
- *
- * Required environment variables:
- *   IDS_ENGINE_USER  — backend login username (default: admin)
- *   IDS_ENGINE_PASS  — backend login password (REQUIRED, no default)
- */
+
 public class IDSEngine {
 
     private static final String BPF_FILTER = "icmp or tcp or udp or arp";
@@ -38,7 +26,7 @@ public class IDSEngine {
     private static final int    TIMEOUT_MS = 10;
     private static final String LOG_FILE   = "/app/logs/ids-alerts.log";
 
-    // ── Detectors ────────────────────────────────────────────────────────────
+    //Detectors
     private IcmpAbuseDetector           icmpDetector;
     private NmapScanDetector            nmapDetector;
     private WhitelistViolationDetector  whitelistDetector;
@@ -66,16 +54,16 @@ public class IDSEngine {
     private Thread           alertThread;
     private String           backendToken;
 
-    // ── FIX: Multiple capture handles, one per interface ─────────────────────
+    // Multiple capture handles, one per interface
     // Previously: single PcapHandle pcapHandle (only captured one interface).
     // Now: one handle per relevant interface, each with its own capture thread.
     private final List<PcapHandle> captureHandles = new CopyOnWriteArrayList<>();
 
-    // ── Packet queue ─────────────────────────────────────────────────────────
+    //Packet queue
     // All capture threads push here; drain workers pop and process.
     private final BlockingQueue<Packet> packetQueue = new ArrayBlockingQueue<>(10_000);
 
-    // FIX: Use CachedThreadPool so we can scale to N capture threads + M drain
+    // Use CachedThreadPool to scale to N capture threads + M drain
     // threads without knowing N at startup. Threads are long-lived, not churned.
     private final ExecutorService workers = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "ids-worker");
@@ -168,12 +156,7 @@ public class IDSEngine {
         System.out.println("Backend: " + backendUrl);
         System.out.println("Log:     " + LOG_FILE);
 
-        // 6. FIX: Open ALL relevant interfaces, not just one.
-        //
-        //    Previously: resolveInterface(name) returned ONE iface.
-        //    Problem:    fallback picked wlp1s0 (WiFi) which has no Docker bridge traffic.
-        //    Fix:        resolveInterfaces() returns a list. Each gets its own PcapHandle
-        //                and its own capture thread. All push into the shared packetQueue.
+      
         List<PcapNetworkInterface> targets = resolveInterfaces(ifaceArg);
 
         System.out.println("\n[IDS] Capturing on " + targets.size() + " interface(s):");
@@ -192,24 +175,22 @@ public class IDSEngine {
         }
         System.out.println("\n[IDS] LIVE CAPTURE STARTED\n");
 
-        // 7. Start drain (process) workers — 2 threads consume from the queue
+        
         workers.submit(this::drainQueue);
         workers.submit(this::drainQueue);
 
-        // 8. Start one capture thread per interface.
-        //    Each thread runs pcapHandle.loop(-1, ...) which blocks until interrupted.
-        //    They all push packets into the shared queue via enqueue().
+       
         for (PcapHandle handle : captureHandles) {
             workers.submit(() -> runCaptureLoop(handle));
         }
 
-        // 9. Periodic tasks
+        // Periodic tasks
         scheduler.scheduleAtFixedRate(this::cleanup,      5,  5, TimeUnit.MINUTES);
         scheduler.scheduleAtFixedRate(this::reportDrops,  1,  1, TimeUnit.MINUTES);
 
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "Shutdown"));
 
-        // 10. Block the main thread until interrupted.
+        //Block the main thread until interrupted.
         //     The actual capture runs on worker threads now.
         try {
             Thread.currentThread().join();
@@ -218,7 +199,7 @@ public class IDSEngine {
         }
     }
 
-    // ── Interface resolution ─────────────────────────────────────────────────
+    //Interface resolution
 
     /**
      * Resolves which interfaces to capture on.
@@ -295,7 +276,7 @@ public class IDSEngine {
         return all.stream().filter(i -> !i.isLoopBack()).collect(Collectors.toList());
     }
 
-    // ── Capture loop (one per interface) ────────────────────────────────────
+    //Capture loop (one per interface)
 
     /**
      * Runs on a dedicated worker thread. Blocks until the handle is closed.
@@ -313,7 +294,7 @@ public class IDSEngine {
         }
     }
 
-    // ── Packet queue ─────────────────────────────────────────────────────────
+    // Packet queue
 
     private void enqueue(Packet packet) {
         if (packet == null) return;
@@ -330,7 +311,7 @@ public class IDSEngine {
         }
     }
 
-    // ── Worker thread ────────────────────────────────────────────────────────
+    //Worker thread
 
     private void drainQueue() {
         while (!Thread.currentThread().isInterrupted()) {
@@ -392,10 +373,7 @@ public class IDSEngine {
             }
 
             if ("UDP".equalsIgnoreCase(proto)) {
-                // FIX: was called TWICE — roguedhcpDetector.analyze() was invoked with
-                // extractUdpPayload(packet) AND udpPayload in the same block,
-                // causing every DHCP packet to be analyzed twice → double alerts.
-                // Now called exactly once using the already-extracted udpPayload.
+               
                 rogueDhcpDetector.analyze(ctx, udpPayload);
             }
 
@@ -441,8 +419,7 @@ public class IDSEngine {
         return null;
     }
 
-    // ── Auth ─────────────────────────────────────────────────────────────────
-
+    // Auth
     private String loginToBackend(String backendUrl) {
         String username = System.getenv().getOrDefault("IDS_ENGINE_USER", "admin");
         String password = System.getenv("IDS_ENGINE_PASS");
@@ -488,8 +465,7 @@ public class IDSEngine {
         return null;
     }
 
-    // ── Cleanup ──────────────────────────────────────────────────────────────
-
+   
     private void cleanup() {
         detectors.forEach(Detector::cleanup);
     }
@@ -498,7 +474,7 @@ public class IDSEngine {
         System.out.println("\n[IDS] Shutting down...");
         scheduler.shutdownNow();
         workers.shutdownNow();
-        // Close all capture handles — this causes each runCaptureLoop() to return
+       
         for (PcapHandle handle : captureHandles) {
             if (handle != null && handle.isOpen()) {
                 try { handle.breakLoop(); } catch (NotOpenException ignored) {}

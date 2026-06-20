@@ -1,62 +1,60 @@
 package com.ids.detectors;
- 
+
 import com.ids.alerts.AlertManager;
 import com.ids.models.PacketContext;
 import com.ids.models.PacketRecord;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
- 
+
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
- 
+
 public class BruteForceDetector implements Detector {
- 
-    // Ports commonly targeted by brute force attacks
+
     private static final Set<Integer> AUTH_PORTS = Set.of(
         22,    // SSH
         3389,  // RDP
         21,    // FTP
-        23,    // Telnet
-        80, 443, 8080, 8443  // HTTP/S (login endpoints)
+        23     // Telnet
     );
- 
+
     // Thresholds
-    private static final int  ATTEMPT_THRESHOLD = 10;   // attempts in window before alert
-    private static final long WINDOW_MS         = 60_000L;  // 1-minute sliding window
-    private static final long COOLDOWN_MS       = 300_000L; // 5 min between alerts per key
- 
+    private static final int  ATTEMPT_THRESHOLD = 10; 
+    private static final long WINDOW_MS         = 60_000L;  
+    private static final long COOLDOWN_MS       = 300_000L; 
+
     // key = "srcIP:dstIP:dstPort"
-    private final Map<String, java.util.List<Long>> attemptMap =new ConcurrentHashMap<>();
-    private final Map<String, Long>         lastAlerts  = new ConcurrentHashMap<>();
- 
+    private final Map<String, java.util.List<Long>> attemptMap = new ConcurrentHashMap<>();
+    private final Map<String, Long>                 lastAlerts = new ConcurrentHashMap<>();
+
     private final AlertManager alertManager;
     private final String subnetPrefix;
- 
+
     public BruteForceDetector(AlertManager alertManager, String subnet) {
         this.alertManager = alertManager;
         this.subnetPrefix = extractPrefix(subnet);
     }
- 
+
     public void analyze(PacketContext ctx) {
         if (ctx.getSrcIp() == null || ctx.getDstIp() == null) return;
- 
+
         int dstPort = ctx.getDstPort();
         if (!AUTH_PORTS.contains(dstPort)) return;
- 
+
         String srcIP  = ctx.getSrcIp();
         String dstIP  = ctx.getDstIp();
         String srcMac = ctx.getSrcMac();
         String dstMac = ctx.getDstMac();
         String proto  = ctx.getProtocol();
- 
+
         // Only flag external → internal or internal → internal (not loopback)
         if (srcIP.startsWith("127.")) return;
- 
+
         long now = System.currentTimeMillis();
         String key = srcIP + ":" + dstIP + ":" + dstPort;
- 
+
         java.util.List<Long> attempts =
                 attemptMap.computeIfAbsent(
                         key,
@@ -75,7 +73,16 @@ public class BruteForceDetector implements Detector {
         if (count < ATTEMPT_THRESHOLD) {
             return;
         }
- 
+
+        // this gate existed but was never called, so every packet past
+        // the threshold re-raised a brand new alert (no dedup at all). That
+        // is why the same source/dest/port combo could fire dozens of
+        // CRITICAL alerts inside a few minutes. Now we only re-alert for a
+        // given key once the cooldown window has elapsed.
+        if (!shouldAlert(key, now)) {
+            return;
+        }
+
         // Escalate severity based on count and port sensitivity
         Severity sev;
         if (count >= 50) {
@@ -85,7 +92,7 @@ public class BruteForceDetector implements Detector {
         } else {
             sev = Severity.MEDIUM;
         }
- 
+
         alertManager.raise(new ThreatEvent(
                 ThreatType.BRUTE_FORCE_ATTEMPT,
                 srcIP, srcMac,
@@ -97,7 +104,7 @@ public class BruteForceDetector implements Detector {
                 proto, "BRUTE_FORCE", dstPort
         ));
     }
- 
+
     private boolean shouldAlert(String key, long now) {
         Long last = lastAlerts.get(key);
         if (last == null || (now - last) > COOLDOWN_MS) {
@@ -106,13 +113,13 @@ public class BruteForceDetector implements Detector {
         }
         return false;
     }
- 
+
     private String extractPrefix(String subnet) {
         if (subnet == null) return "192.168.1.";
         String[] p = subnet.split("/")[0].split("\\.");
         return p[0] + "." + p[1] + "." + p[2] + ".";
     }
- 
+
     public void cleanup() {
         long now = System.currentTimeMillis();
         attemptMap.entrySet().removeIf(entry -> {
@@ -128,4 +135,3 @@ public class BruteForceDetector implements Detector {
                 now - e.getValue() > 600_000L);
     }
 }
- 

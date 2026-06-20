@@ -18,16 +18,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
-/**
- * IP Investigation Panel — a self-contained JavaFX component.
- *
- * Drop this into any HBox or SplitPane. Call investigate(ip) to load
- * a profile. The panel manages its own background threads safely.
- *
- * Design principle: Every network call happens in a Task (background thread).
- * All UI updates go through Platform.runLater(). This ensures the JavaFX
- * Application Thread is never blocked, even on slow backends.
- */
+
 public class IpInvestigationPanel extends VBox {
 
     private static final DateTimeFormatter FMT =
@@ -43,6 +34,7 @@ public class IpInvestigationPanel extends VBox {
     private final Label  lblIp         = bold("", 16);
     private final Label  lblRiskBadge  = new Label("—");
     private final Label  lblScore      = new Label("Score: —");
+    private final Button btnTrustDevice = new Button("✓ Trust This Device");
 
     //Overview grid
     private final Label lblFirstSeen   = info("—");
@@ -112,7 +104,48 @@ public class IpInvestigationPanel extends VBox {
         t.start();
     }
 
-    //PRIVATE BUILD
+    /**
+     * Adds the IP/MAC currently shown in this panel to /api/my-whitelist via
+     * the BackendClient method that already existed (addMyWhitelistEntry) —
+     * this just calls it. Runs on a background Task like every other backend
+     * call in this class so the FX thread is never blocked.
+     */
+    private void trustCurrentDevice() {
+        if (currentIp == null || currentIp.isBlank()) {
+            setStatus("No IP selected to trust.");
+            return;
+        }
+        String mac = lblMac.getText();
+        if (mac == null || mac.isBlank() || mac.equals("—")) {
+            mac = null; // 
+        }
+        final String macToSave = mac;
+
+        btnTrustDevice.setDisable(true);
+        setStatus("Adding " + currentIp + " to your trusted devices...");
+
+        Task<Void> trustTask = new Task<>() {
+            @Override protected Void call() throws Exception {
+                backend.addMyWhitelistEntry(currentIp, macToSave,
+                        "Trusted via investigation panel");
+                return null;
+            }
+        };
+        trustTask.setOnSucceeded(e -> Platform.runLater(() -> {
+            btnTrustDevice.setText("✓ Trusted");
+            setStatus(currentIp + " added to trusted devices. The engine refreshes "
+                    + "its whitelist within 30s — alerts for this device should stop shortly after.");
+        }));
+        trustTask.setOnFailed(e -> Platform.runLater(() -> {
+            btnTrustDevice.setDisable(false);
+            setStatus("Failed to trust " + currentIp + ": "
+                    + trustTask.getException().getMessage());
+        }));
+
+        Thread t = new Thread(trustTask, "ids-trust-device");
+        t.setDaemon(true);
+        t.start();
+    }
 
     private void buildUI(Runnable onClose) {
         setSpacing(0);
@@ -154,10 +187,22 @@ public class IpInvestigationPanel extends VBox {
         btnClose.setOnAction(e -> onClose.run());
         btnClose.setTooltip(new Tooltip("Close investigation panel"));
 
+        // Trust This Device — calls the same /api/my-whitelist endpoint that
+        // NetworkWhitelist.loadTrustedDevicesFromBackend() already reads from.
+        // Wires up the whitelist UI gap: the backend and BackendClient methods
+        // already existed, nothing in the desktop client ever called them.
+        btnTrustDevice.setStyle("-fx-background-color: #1f6feb; -fx-text-fill: white;"
+                        + "-fx-cursor: hand; -fx-font-size: 11px; -fx-font-weight: bold;"
+                        + "-fx-padding: 4 10 4 10; -fx-background-radius: 4;");
+        btnTrustDevice.setOnAction(e -> trustCurrentDevice());
+        btnTrustDevice.setTooltip(new Tooltip(
+            "Add this IP/MAC to your trusted devices — stops all behavioral detectors from alerting on it"));
+
         VBox titleBox = new VBox(2, lblIp, new HBox(6, lblRiskBadge, lblScore));
         lblScore.setStyle("-fx-text-fill: #8b949e; -fx-font-size: 11px;");
 
-        header.getChildren().addAll(new Circle(5, Color.web("#f59e0b")), titleBox, spacer, btnClose);
+        header.getChildren().addAll(new Circle(5, Color.web("#f59e0b")), titleBox, spacer,
+                                     btnTrustDevice, btnClose);
         return header;
     }
 
@@ -316,15 +361,7 @@ public class IpInvestigationPanel extends VBox {
         buildPacketEvidence(t);
     }
 
-    /**
-     * Wireshark-style packet evidence.
-     *
-     * We don't have full packet captures stored per alert (that would require
-     * the PacketLog table). What we DO have is enough to build a meaningful
-     * evidence panel. Each layer is an expandable TitledPane.
-     *
-     * When you hook in PacketLog data in a future phase, just add more layers here.
-     */
+   
     private void buildPacketEvidence(JsonNode alert) {
         packetEvidenceBox.getChildren().clear();
 
@@ -579,6 +616,8 @@ public class IpInvestigationPanel extends VBox {
             lblTargets.setText("—"); lblTotalAlerts.setText("—");
             lblTopThreat.setText("—"); lblMostTarget.setText("—");
             lblProtocols.setText("—"); lblMac.setText("—");
+            btnTrustDevice.setDisable(false);
+            btnTrustDevice.setText("✓ Trust This Device");
             threatHistoryList.getItems().clear();
             threatHistoryNodes.clear();
             lblDetailType.setText("—"); lblDetailSeverity.setText("—");

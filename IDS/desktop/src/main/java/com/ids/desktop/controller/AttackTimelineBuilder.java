@@ -6,19 +6,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
-/**
- * Translates a chronological list of alerts (for one IP) into a
- * human-readable attack timeline narrative.
- *
- * Logic: We classify each alert into a "kill chain phase", then collapse
- * consecutive alerts of the same phase into a single timeline event.
- * This prevents 200 port-scan alerts from becoming 200 timeline entries.
- *
- * Why classify by phase rather than threat type?
- * Because the same attacker may switch tools but stay in the same phase.
- * NMAP_SYN_SCAN and UDP_SCAN both = RECONNAISSANCE. Grouping them gives
- * the analyst a cleaner story: "Recon lasted 4 minutes, then pivoted."
- */
+
 public class AttackTimelineBuilder {
 
     private static final DateTimeFormatter FMT =

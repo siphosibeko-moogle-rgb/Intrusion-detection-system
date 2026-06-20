@@ -185,11 +185,6 @@ public class AlertTableManager {
         });
     }
 
-    /**
-     * Rebuild the top-20 attackers list from allAlerts.
-     * Must be called on the JavaFX thread.
-     * Throttled externally — caller checks the time delta before calling.
-     */
     public void rebuildAttackers() {
         Map<String, Long> counts = allAlerts.stream()
                 .filter(a -> a.getSourceIp() != null && !a.getSourceIp().isEmpty())
