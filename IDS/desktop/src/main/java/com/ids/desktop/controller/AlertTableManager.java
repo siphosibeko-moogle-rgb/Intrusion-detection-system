@@ -7,6 +7,7 @@ import javafx.collections.transformation.FilteredList;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -49,8 +50,6 @@ public class AlertTableManager {
         this.allAlerts     = allAlerts;
         this.attackers     = attackers;
     }
-
-    /** Call once from MainController.initialize() */
     public void setup(
             TableColumn<AlertItem, String>  colTimestamp,
             TableColumn<AlertItem, String>  colSeverity,
@@ -62,20 +61,21 @@ public class AlertTableManager {
             TableColumn<AlertItem, String>  colRequestType,
             TableColumn<AlertItem, Integer> colPackets,
             TableColumn<AlertItem, String>  colDetails,
+            TableColumn<AlertItem, Integer> colOccurrences,
             TableColumn<AlertItem, String>  colAtkIp,
             TableColumn<AlertItem, String>  colAtkMac,
             TableColumn<AlertItem, Integer> colAtkCount) {
 
         setupAlertColumns(colTimestamp, colSeverity, colThreatType,
                 colSourceIp, colSourceMac, colDestIp,
-                colProtocol, colRequestType, colPackets, colDetails);
+                colProtocol, colRequestType, colPackets, colDetails, colOccurrences);
 
         setupAttackerColumns(colAtkIp, colAtkMac, colAtkCount);
         setupFilters();
     }
 
     private void setupAlertColumns(
-            TableColumn<AlertItem, String>  colTimestamp,
+    		TableColumn<AlertItem, String>  colTimestamp,
             TableColumn<AlertItem, String>  colSeverity,
             TableColumn<AlertItem, String>  colThreatType,
             TableColumn<AlertItem, String>  colSourceIp,
@@ -84,7 +84,8 @@ public class AlertTableManager {
             TableColumn<AlertItem, String>  colProtocol,
             TableColumn<AlertItem, String>  colRequestType,
             TableColumn<AlertItem, Integer> colPackets,
-            TableColumn<AlertItem, String>  colDetails) {
+            TableColumn<AlertItem, String>  colDetails,
+            TableColumn<AlertItem, Integer> colOccurrences) {
 
         colTimestamp  .setCellValueFactory(new PropertyValueFactory<>("timestamp"));
         colSeverity   .setCellValueFactory(new PropertyValueFactory<>("severity"));
@@ -96,6 +97,8 @@ public class AlertTableManager {
         colRequestType.setCellValueFactory(new PropertyValueFactory<>("requestType"));
         colPackets    .setCellValueFactory(new PropertyValueFactory<>("packetCount"));
         colDetails    .setCellValueFactory(new PropertyValueFactory<>("details"));
+        
+		colOccurrences.setCellValueFactory(new PropertyValueFactory<>("occurrences"));
 
         // Severity colour-coding — RED for critical, orange for high, etc.
         colSeverity.setCellFactory(col -> new TableCell<>() {
@@ -213,5 +216,32 @@ public class AlertTableManager {
         tfIp.clear(); tfMac.clear(); tfType.clear();
         cbSeverity.getSelectionModel().clearSelection();
         cbProtocol.getSelectionModel().clearSelection();
+    }
+    private final Map<String, AlertItem> summaryIndex = new HashMap<>();
+    private String keyOf(String sourceIp, String threatType) {
+        return sourceIp + "\u0000" + threatType;
+    }
+
+    /** Call once after allAlerts.setAll(...) on initial load / refresh. */
+    public void rebuildIndex() {
+        summaryIndex.clear();
+        for (AlertItem item : allAlerts)
+            summaryIndex.put(keyOf(item.getSourceIp(), item.getThreatType()), item);
+    }
+
+    /** Call for every WebSocket push instead of allAlerts.add(0, item). */
+    public void upsertAlert(AlertItem incoming) {
+        String key = keyOf(incoming.getSourceIp(), incoming.getThreatType());
+        AlertItem existing = summaryIndex.get(key);
+        if (existing != null) {
+            existing.setOccurrences(incoming.getOccurrences());
+            existing.setTimestamp(incoming.getTimestamp());   // last seen
+            existing.setFirstSeen(incoming.getFirstSeen());
+            allAlerts.remove(existing);
+            allAlerts.add(0, existing);   // bubble most-recently-active to top
+        } else {
+            summaryIndex.put(key, incoming);
+            allAlerts.add(0, incoming);
+        }
     }
 }

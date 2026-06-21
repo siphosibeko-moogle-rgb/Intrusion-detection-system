@@ -150,5 +150,12 @@ public class AlertController {
         )).toList();
         return ResponseEntity.ok(result);
     }
-    
+    @GetMapping("/summary")
+    public ResponseEntity<?> summary(
+            @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String type) {
+        if (severity != null) return ResponseEntity.ok(alertService.getSummariesBySeverity(severity));
+        if (type != null)     return ResponseEntity.ok(alertService.getSummariesByType(type));
+        return ResponseEntity.ok(alertService.getSummaries());
+    }
 }

@@ -1,46 +1,69 @@
 package com.ids.service;
 
 import com.ids.model.Alert;
+import com.ids.model.AlertSummary;
 import com.ids.repository.AlertRepository;
+import com.ids.repository.AlertSummaryRepository;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import com.ids.dto.AlertSummaryDTO;
 import com.ids.dto.IpProfileDTO;
 import java.util.*;
 import java.util.stream.Collectors;
-
 import java.time.Instant;
-import java.util.*;
 
 @Service
 public class AlertService {
 
-    private final AlertRepository       repo;
-    private final SimpMessagingTemplate ws;
-    private final EmailAlertService     emailService;
+    private final AlertRepository        repo;
+    private final SimpMessagingTemplate  ws;
+    private final EmailAlertService      emailService;
+    private final AlertSummaryRepository summaryRepo;
 
     public AlertService(AlertRepository repo,
                         SimpMessagingTemplate ws,
-                        EmailAlertService emailService) {
+                        EmailAlertService emailService,
+                        AlertSummaryRepository summaryRepo) {
         this.repo         = repo;
         this.ws           = ws;
         this.emailService = emailService;
+        this.summaryRepo  = summaryRepo;
     }
 
-    // ── Flagged IPs (UNKNOWN_IP / OUTSIDE_SUBNET) ──────────────────────────
+    // ── Flagged IPs (UNKNOWN_IP / OUTSIDE_SUBNET) ─────────────────────────
     public List<Object[]> getFlaggedIpSummary() {
-        return repo.findFlaggedIpSummary();   // ← repo, not alertRepository
+        return repo.findFlaggedIpSummary();
     }
 
-    // ── Core alert persistence ──────────────────────────────────────────────
+    // ── Core alert persistence ────────────────────────────────────────────
     public Alert save(Alert alert) {
+        // 1. Always persist the raw event — this is what powers the
+        //    Investigation Panel (ip-profile / timeline). Unchanged.
         Alert saved = repo.save(alert);
-        ws.convertAndSend("/topic/alerts", saved);
-        emailService.sendAlertEmail(saved);
+
+        // 2. Atomically roll it into the summary row the dashboard displays.
+        AlertSummary summary = summaryRepo.upsert(
+            alert.getSourceIp(), alert.getThreatType(), alert.getSeverity(),
+            alert.getSourceMac(), alert.getDestIp(), alert.getDestMac(),
+            alert.getProtocol(), alert.getRequestType(), alert.getDetails(),
+            alert.getPacketCount(), alert.getWindowMs(), saved.getTimestamp()
+        );
+
+        // 3. Broadcast the SUMMARY, not the raw event — this is the actual
+        //    fix for the duplicate-row bug. The desktop client now upserts
+        //    by (sourceIp, threatType) instead of blindly prepending.
+        ws.convertAndSend("/topic/alerts", summary);
+
+        // Only email on the FIRST occurrence — otherwise a sustained scan
+        // (re-alerting every ~3s per the engine cooldown) floods the inbox
+        // the same way it was flooding the table.
+        if (summary.getOccurrenceCount() == 1) {
+            emailService.sendAlertEmail(saved);
+        }
         return saved;
     }
 
-    // ── Queries ─────────────────────────────────────────────────────────────
+    // ── Queries ──────────────────────────────────────────────────────────
     public List<Alert> getRecent()               { return repo.findTop100ByOrderByTimestampDesc(); }
     public List<Alert> getBySeverity(String sev) { return repo.findBySeverityOrderByTimestampDesc(sev); }
     public List<Alert> getByType(String type)    { return repo.findByThreatTypeOrderByTimestampDesc(type); }
@@ -48,7 +71,11 @@ public class AlertService {
     public List<Alert> getBySourceMac(String mac){ return repo.findBySourceMacOrderByTimestampDesc(mac); }
     public List<Alert> getSince(Instant since)   { return repo.findByTimestampAfterOrderByTimestampDesc(since); }
 
-    // ── Stats ────────────────────────────────────────────────────────────────
+    public List<AlertSummary> getSummaries() { return summaryRepo.findAllByOrderByLastSeenDesc(); }
+    public List<AlertSummary> getSummariesBySeverity(String sev) { return summaryRepo.findBySeverityOrderByLastSeenDesc(sev); }
+    public List<AlertSummary> getSummariesByType(String type) { return summaryRepo.findByThreatTypeOrderByLastSeenDesc(type); }
+
+    // ── Stats ────────────────────────────────────────────────────────────
     public Map<String, Object> getStats() {
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("total",    repo.count());
@@ -76,6 +103,7 @@ public class AlertService {
         stats.put("topAttackers", topAttackers);
         return stats;
     }
+
     public IpProfileDTO buildIpProfile(String ip) {
         // One DB call — compute everything from the result in Java.
         // For a single IP, even 10k alerts is fine in memory.

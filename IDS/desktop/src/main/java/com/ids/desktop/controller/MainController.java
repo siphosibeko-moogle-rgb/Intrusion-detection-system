@@ -109,6 +109,8 @@ public class MainController implements Initializable {
     private AlertTableManager alertManager;
     private IpInvestigationPanel investigationPanel;
     private SplitPane mainSplitPane;
+    
+    @FXML private TableColumn<AlertItem, Integer> colOccurrences;
 
     private final ObservableList<AlertItem>        allAlerts      = FXCollections.observableArrayList();
     private final ObservableList<AlertItem>        attackers      = FXCollections.observableArrayList();
@@ -146,7 +148,7 @@ public class MainController implements Initializable {
         alertManager.setup(
                 colTimestamp, colSeverity, colThreatType,
                 colSourceIp, colSourceMac, colDestIp,
-                colProtocol, colRequestType, colPackets, colDetails,
+                colProtocol, colRequestType, colPackets, colDetails, colOccurrences,
                 colAtkIp, colAtkMac, colAtkCount);
 
         setupWhitelistTables();
@@ -312,16 +314,19 @@ public class MainController implements Initializable {
     //DATA LOADING
     private void loadAllData() {
         dataLoader.loadAlerts(this::onAlertsLoaded, this::updateStats,
-                msg -> setStatus("Alert load failed: " + msg, true));
+                msg -> handleSessionError("Alert load failed", msg));
         dataLoader.loadWhitelist(this::onWhitelistLoaded,
                 msg -> System.err.println("[Desktop] Whitelist load error: " + msg));
         dataLoader.loadCases(caseEntries::setAll,
                 msg -> System.err.println("[Desktop] Cases load error: " + msg));
+        dataLoader.loadAlertSummaries(this::onAlertsLoaded, this::updateStats,
+                msg -> handleSessionError("Alert load failed", msg));
     }
 
     private void onAlertsLoaded(List<AlertItem> items) {
         List<AlertItem> capped = items.size() > 2000 ? items.subList(0, 2000) : items;
         allAlerts.setAll(capped);
+        alertManager.rebuildIndex();
         alertManager.rebuildAttackers();
     }
 
@@ -345,30 +350,20 @@ public class MainController implements Initializable {
         String type     = node.path("threatType").asText();
         String srcIp    = node.path("sourceIp").asText();
 
-        String severityDisplay = severity.isEmpty() ? "?" : severity;
-        String typeDisplay     = type.isEmpty()     ? "?" : type;
-        String srcIpDisplay    = srcIp.isEmpty()    ? "?" : srcIp;
-
         Platform.runLater(() -> {
             liveEntries.add(0, String.format("[%s] %s %s from %s",
-                    ts, severityDisplay, typeDisplay, srcIpDisplay));
+                    ts, severity.isEmpty() ? "?" : severity,
+                    type.isEmpty() ? "?" : type, srcIp.isEmpty() ? "?" : srcIp));
             if (liveEntries.size() > MAX_LIVE_ENTRIES)
                 liveEntries.remove(liveEntries.size() - 1);
 
-            AlertItem item = new AlertItem(
-                    ts,
-                    severity,
-                    type,
-                    srcIp,
-                    node.path("sourceMac").asText(),
-                    node.path("destIp").asText(),
-                    node.path("protocol").asText(),
-                    node.path("requestType").asText(),
-                    node.path("packetCount").asInt(0),
-                    node.path("details").asText());
-            allAlerts.add(0, item);
-            lblTotal.setText(String.valueOf(allAlerts.size()));
-
+            AlertItem item = new AlertItem(ts, severity, type, srcIp,
+                    node.path("sourceMac").asText(), node.path("destIp").asText(),
+                    node.path("protocol").asText(), node.path("requestType").asText(),
+                    node.path("packetCount").asInt(0), node.path("details").asText());
+            item.setOccurrences(node.path("occurrenceCount").asInt(1));
+            item.setFirstSeen(FMT.format(Instant.now()));
+            alertManager.upsertAlert(item);
             long now = System.currentTimeMillis();
             if (now - alertManager.getLastAttackerRebuild() > 5_000)
                 alertManager.rebuildAttackers();
@@ -382,7 +377,7 @@ public class MainController implements Initializable {
             if (isReady()) dataLoader.loadAlerts(
                     this::onAlertsLoaded,
                     this::updateStats,
-                    msg -> setStatus("Poll failed: " + msg, true));
+                    msg -> handleSessionError("Poll failed", msg));
         }, 30, 30, TimeUnit.SECONDS);
     }
 
@@ -678,5 +673,11 @@ public class MainController implements Initializable {
     private void closeInvestigationPanel() {
         investigationPanel.setVisible(false);
         investigationPanel.setManaged(false);
+    }
+    private void handleSessionError(String prefix, String msg) {
+        setStatus(prefix + ": " + msg, false);              // false → dot goes red, honestly
+        if (msg != null && msg.startsWith("Session expired")) {
+            backend.invalidateSession();                     // isReady() now correctly returns false,
+        }                                                      // so polling stops hammering a dead token
     }
 }

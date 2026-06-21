@@ -9,6 +9,7 @@ import com.ids.desktop.model.MyWhitelistItem;
 import com.ids.desktop.model.OrgWhitelistItem;
 import okhttp3.*;
 
+
 import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -29,6 +30,7 @@ public class BackendClient {
     private final OkHttpClient http;
     private final ObjectMapper mapper   = new ObjectMapper();
     private       String       jwtToken = "";
+    public void invalidateSession() { jwtToken = ""; }
 
     public BackendClient(String baseUrl) {
         this.baseUrl = baseUrl;
@@ -332,5 +334,25 @@ public class BackendClient {
     public JsonNode getTimeline(String ip) throws Exception {
         return mapper.readTree(get("/api/alerts/timeline/" + ip));
     }
-
+    public List<AlertItem> fetchAlertSummaries() throws IOException {
+        List<AlertItem> list = new ArrayList<>();
+        for (JsonNode n : mapper.readTree(get("/api/alerts/summary"))) {
+            AlertItem item = new AlertItem(
+                formatTs(textOf(n, "lastSeen", "")),
+                textOf(n, "severity", ""),
+                textOf(n, "threatType", ""),
+                textOf(n, "sourceIp", ""),
+                textOf(n, "sourceMac", ""),
+                textOf(n, "destIp", ""),
+                textOf(n, "protocol", ""),
+                textOf(n, "requestType", ""),
+                intOf(n, "packetCount", 0),
+                textOf(n, "details", "")
+            );
+            item.setOccurrences(intOf(n, "occurrenceCount", 1));
+            item.setFirstSeen(formatTs(textOf(n, "firstSeen", "")));
+            list.add(item);
+        }
+        return list;
+    }
 }

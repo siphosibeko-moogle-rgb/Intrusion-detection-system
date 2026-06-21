@@ -18,6 +18,8 @@ public class AlertItem {
     private final SimpleStringProperty requestType= new SimpleStringProperty();
     private final SimpleIntegerProperty packetCount= new SimpleIntegerProperty();
     private final SimpleStringProperty details= new SimpleStringProperty();
+    private final SimpleIntegerProperty occurrences = new SimpleIntegerProperty(1);
+    private final SimpleStringProperty  firstSeen    = new SimpleStringProperty();
 
     public AlertItem() {}
 
@@ -35,7 +37,10 @@ public class AlertItem {
         this.packetCount.set(packetCount);
         this.details.set(details);
     }
-
+    public SimpleIntegerProperty occurrencesProperty() { 
+    	return occurrences; }
+    public SimpleStringProperty  firstSeenProperty()   { 
+    	return firstSeen; }
     public SimpleStringProperty timestampProperty(){ 
     	return timestamp;
     	}
@@ -97,4 +102,14 @@ public class AlertItem {
     public String getDetails(){ 
     	return details.get(); 
     	}
+    public int    getOccurrences() { 
+    	return occurrences.get(); }
+    public String getFirstSeen()   { 
+    	return firstSeen.get(); }
+    public void   setOccurrences(int v) { 
+    	occurrences.set(v); }
+    public void   setFirstSeen(String v) { 
+    	firstSeen.set(v); }
+    public void   setTimestamp(String v) { 
+    	timestamp.set(v); }
 }

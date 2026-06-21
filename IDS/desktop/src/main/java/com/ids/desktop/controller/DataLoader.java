@@ -110,4 +110,17 @@ public class DataLoader {
         t.setDaemon(true);
         t.start();
     }
+    public void loadAlertSummaries(Consumer<List<AlertItem>> onAlerts,
+            Consumer<JsonNode>        onStats,
+            Consumer<String>          onError) {
+					thread("ids-load-alert-summaries", () -> {
+					try {
+					List<AlertItem> items = backend.fetchAlertSummaries();
+					JsonNode stats        = backend.fetchStats();
+					Platform.runLater(() -> { onAlerts.accept(items); onStats.accept(stats); });
+					} catch (Exception e) {
+					Platform.runLater(() -> onError.accept(e.getMessage()));
+					}
+				});
+		}
 }

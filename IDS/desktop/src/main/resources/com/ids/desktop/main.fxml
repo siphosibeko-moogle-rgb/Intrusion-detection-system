@@ -56,6 +56,7 @@
                                 <TableColumn fx:id="colRequestType" text="Request"/>
                                 <TableColumn fx:id="colPackets"     text="Packets"/>
                                 <TableColumn fx:id="colDetails"     text="Details"/>
+                                <TableColumn fx:id="colOccurrences" text="Occurrences" prefWidth="90"/>
                             </columns>
                         </TableView>
                     </VBox>
