@@ -1,13 +1,15 @@
 package com.ids.controller;
 
 import com.ids.model.Alert;
+import com.ids.model.AlertSummary;
 import com.ids.service.AlertService;
-
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 import com.ids.repository.AlertRepository;
+import com.ids.repository.AlertSummaryRepository;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -15,25 +17,30 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.List;
-import java.util.Map;
-import java.util.ArrayList;
 import com.ids.dto.AlertSummaryDTO;
 import com.ids.dto.IpProfileDTO;
 
 @RestController
 @RequestMapping("/api/alerts")
 public class AlertController {
-	
+
     @Value("${ids.engine.apikey}")
     private String engineApiKey;
 
-    private final AlertService alertService;
-    private final AlertRepository alertRepository;
+    private final AlertService            alertService;
+    private final AlertRepository         alertRepository;
+    private final AlertSummaryRepository  summaryRepository;
+    private final SimpMessagingTemplate   ws;
 
-    public AlertController(AlertService alertService,AlertRepository alertRepository) {
-		this.alertService    = alertService;
-		this.alertRepository = alertRepository;
-}
+    public AlertController(AlertService alertService,
+                           AlertRepository alertRepository,
+                           AlertSummaryRepository summaryRepository,
+                           SimpMessagingTemplate ws) {
+        this.alertService      = alertService;
+        this.alertRepository   = alertRepository;
+        this.summaryRepository = summaryRepository;
+        this.ws                = ws;
+    }
 
     /**
      * Engine posts alerts here — validated by X-Engine-Key header.
@@ -56,29 +63,24 @@ public class AlertController {
         a.setSeverity   ((String) body.get("severity"));
         a.setDetails    ((String) body.get("details"));
         a.setPacketCount(body.get("packetCount") != null
-            ? ((Number) body.get("packetCount")).intValue() : 0);
+                ? ((Number) body.get("packetCount")).intValue() : 0);
         a.setWindowMs   (body.get("windowMs") != null
-            ? ((Number) body.get("windowMs")).longValue() : 0L);
+                ? ((Number) body.get("windowMs")).longValue() : 0L);
+
         String ts = (String) body.get("timestamp");
         if (ts != null) {
             ts = ts.replaceAll("(\\.\\d{3})\\d+", "$1");
             if (!ts.endsWith("Z") && !ts.contains("+")) ts = ts + "Z";
             a.setTimestamp(Instant.parse(ts));
-        } else  {
+        } else {
             a.setTimestamp(Instant.now());
         }
 
-        return ResponseEntity.ok(alertService.save(a));  // ← this line is missing
+        return ResponseEntity.ok(alertService.save(a));
     }
 
     /**
      * Query alerts with optional filters.
-     * GET /api/alerts
-     * GET /api/alerts?severity=CRITICAL
-     * GET /api/alerts?type=NMAP_SYN_SCAN
-     * GET /api/alerts?sourceIp=192.168.1.45
-     * GET /api/alerts?sourceMac=aa:bb:cc:dd:ee:ff
-     * GET /api/alerts?sinceMs=1700000000000
      */
     @GetMapping
     public ResponseEntity<?> list(
@@ -86,33 +88,92 @@ public class AlertController {
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String sourceIp,
             @RequestParam(required = false) String sourceMac,
-            @RequestParam(required = false) Long   sinceMs) {
+            @RequestParam(required = false) Long sinceMs) {
 
-        if (severity  != null) return ResponseEntity.ok(alertService.getBySeverity(severity));
-        if (type      != null) return ResponseEntity.ok(alertService.getByType(type));
-        if (sourceIp  != null) return ResponseEntity.ok(alertService.getBySourceIp(sourceIp));
-        if (sourceMac != null) return ResponseEntity.ok(alertService.getBySourceMac(sourceMac));
-        if (sinceMs   != null) return ResponseEntity.ok(
-            alertService.getSince(Instant.ofEpochMilli(sinceMs)));
+        if (severity != null) return ResponseEntity.ok(alertService.getBySeverity(severity));
+        if (type     != null) return ResponseEntity.ok(alertService.getByType(type));
+        if (sourceIp != null) return ResponseEntity.ok(alertService.getBySourceIp(sourceIp));
+        if (sourceMac!= null) return ResponseEntity.ok(alertService.getBySourceMac(sourceMac));
+        if (sinceMs  != null) return ResponseEntity.ok(
+                alertService.getSince(Instant.ofEpochMilli(sinceMs)));
         return ResponseEntity.ok(alertService.getRecent());
     }
 
-    /** Dashboard stats: totals, byType, bySeverity, topAttackers */
+    /**
+     * Returns deduplicated AlertSummary rows — what the dashboard table displays.
+     * GET /api/alerts/summary
+     */
+    @GetMapping("/summary")
+    public ResponseEntity<?> summary(
+            @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String type) {
+        if (severity != null) return ResponseEntity.ok(alertService.getSummariesBySeverity(severity));
+        if (type     != null) return ResponseEntity.ok(alertService.getSummariesByType(type));
+        return ResponseEntity.ok(alertService.getSummaries());
+    }
+
+    /**
+     * Dashboard stats — counts from alert_summary, not raw alerts.
+     *
+     * FIX: was counting from alertRepository (raw events). After deleting a
+     * summary row the raw event count never changed, so the counter stayed
+     * stale. Now counts from summaryRepository so stats match the table.
+     */
     @GetMapping("/stats")
     public ResponseEntity<?> stats() {
-        long total    = alertRepository.count();
-        long critical = alertRepository.countBySeverity("CRITICAL");
-        long high     = alertRepository.countBySeverity("HIGH");
-        long medium   = alertRepository.countBySeverity("MEDIUM");
+        long total    = summaryRepository.count();
+        long critical = summaryRepository.countBySeverity("CRITICAL");
+        long high     = summaryRepository.countBySeverity("HIGH");
+        long medium   = summaryRepository.countBySeverity("MEDIUM");
         return ResponseEntity.ok(Map.of(
-            "total", total, 
+            "total",    total,
             "critical", critical,
-            "high", high, 
-            "medium", medium));
+            "high",     high,
+            "medium",   medium));
     }
+
+    /**
+     * Delete a single AlertSummary row by its id.
+     * DELETE /api/alerts/summaries/{id}
+     *
+     * FIX: This is the correct endpoint to call when a user dismisses an alert
+     * from the dashboard. Deleting from the raw `alerts` table via psql has no
+     * effect on the dashboard because the dashboard reads alert_summary, not alerts.
+     *
+     * After deleting, broadcasts {id} on /topic/alerts/deleted so every connected
+     * desktop client removes the row immediately without waiting for the 30-second poll.
+     */
+    @DeleteMapping("/summaries/{id}")
+    public ResponseEntity<?> deleteSummary(@PathVariable Long id) {
+        if (!summaryRepository.existsById(id))
+            return ResponseEntity.notFound().build();
+
+        summaryRepository.deleteById(id);
+
+        // Notify all live desktop clients instantly
+        ws.convertAndSend("/topic/alerts/deleted", Map.of("id", id));
+
+        return ResponseEntity.ok(Map.of("message", "Alert dismissed", "id", id));
+    }
+
+    /**
+     * Delete ALL AlertSummary rows AND raw alerts.
+     * DELETE /api/alerts
+     *
+     * Broadcasts on /topic/alerts-cleared so live clients wipe their tables.
+     */
+    @DeleteMapping
+    public ResponseEntity<?> clearAll() {
+        summaryRepository.deleteAll();
+        alertRepository.deleteAll();
+
+        ws.convertAndSend("/topic/alerts-cleared", Map.of("cleared", true));
+
+        return ResponseEntity.ok(Map.of("message", "All alerts cleared"));
+    }
+
     /**
      * Returns flagged IPs (UNKNOWN_IP / OUTSIDE_SUBNET) deduplicated by sourceIp.
-     * Used by the Whitelist tab "Flagged IPs" section.
      * GET /api/alerts/flagged-ips
      */
     @GetMapping("/flagged-ips")
@@ -133,29 +194,18 @@ public class AlertController {
         }
         return ResponseEntity.ok(result);
     }
+
+    /** IP investigation profile */
     @GetMapping("/ip-profile/{ip}")
     public ResponseEntity<?> ipProfile(@PathVariable String ip) {
         IpProfileDTO profile = alertService.buildIpProfile(ip);
-        if (profile == null)
-            return ResponseEntity.notFound().build();
+        if (profile == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(profile);
     }
+
+    /** Raw alert timeline for a specific IP */
+    @GetMapping("/timeline/{ip}")
     public ResponseEntity<?> timeline(@PathVariable String ip) {
-        List<Alert> alerts = alertRepository.findBySourceIpOrderByTimestampAsc(ip);
-        List<AlertSummaryDTO> result = alerts.stream().map(a -> new AlertSummaryDTO(
-            a.getId(), a.getThreatType(), a.getSeverity(),
-            a.getSourceIp(), a.getDestIp(), a.getProtocol(),
-            a.getRequestType(), a.getDetails(),
-            a.getPacketCount(), a.getWindowMs(), a.getTimestamp()
-        )).toList();
-        return ResponseEntity.ok(result);
-    }
-    @GetMapping("/summary")
-    public ResponseEntity<?> summary(
-            @RequestParam(required = false) String severity,
-            @RequestParam(required = false) String type) {
-        if (severity != null) return ResponseEntity.ok(alertService.getSummariesBySeverity(severity));
-        if (type != null)     return ResponseEntity.ok(alertService.getSummariesByType(type));
-        return ResponseEntity.ok(alertService.getSummaries());
+        return ResponseEntity.ok(alertService.getBySourceIp(ip));
     }
 }

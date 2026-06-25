@@ -6,6 +6,8 @@ import com.ids.repository.AlertRepository;
 import com.ids.repository.AlertSummaryRepository;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.ids.dto.AlertSummaryDTO;
 import com.ids.dto.IpProfileDTO;
 import java.util.*;
@@ -192,5 +194,15 @@ public class AlertService {
         if (score >= 50) return "HIGH";
         if (score >= 25) return "MEDIUM";
         return "LOW";
+    }
+    @Transactional
+    public void clearAll() {
+        summaryRepo.deleteAll();   // clears alert_summary
+        repo.deleteAll();          // clears alerts
+    }
+
+    @Transactional  
+    public void clearSummaries() {
+        summaryRepo.deleteAll();   // preserves raw alerts for forensic history
     }
 }

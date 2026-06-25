@@ -9,7 +9,6 @@ import com.ids.desktop.model.MyWhitelistItem;
 import com.ids.desktop.model.OrgWhitelistItem;
 import okhttp3.*;
 
-
 import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -18,7 +17,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 
 public class BackendClient {
 
@@ -28,19 +26,20 @@ public class BackendClient {
 
     private final String       baseUrl;
     private final OkHttpClient http;
-    private final ObjectMapper mapper   = new ObjectMapper();
+    private final ObjectMapper mapper    = new ObjectMapper();
     private       String       jwtToken = "";
+
     public void invalidateSession() { jwtToken = ""; }
 
     public BackendClient(String baseUrl) {
         this.baseUrl = baseUrl;
         this.http    = new OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(8,  TimeUnit.SECONDS)
+            .readTimeout(10,    TimeUnit.SECONDS)
             .build();
     }
 
-    // ── AUTH ─────────────────────────────────────────────────────────────────
+    // ── AUTH ──────────────────────────────────────────────────────────────
 
     public boolean login(String username, String password) throws IOException {
         String body = mapper.writeValueAsString(
@@ -60,24 +59,24 @@ public class BackendClient {
     public boolean isLoggedIn() { return !jwtToken.isEmpty(); }
     public String  getBaseUrl() { return baseUrl; }
 
-    // ── ALERTS ───────────────────────────────────────────────────────────────
+    // ── ALERTS ────────────────────────────────────────────────────────────
 
-    public List<AlertItem> fetchAlerts()                     throws IOException {
+    public List<AlertItem> fetchAlerts()                         throws IOException {
         return fetchAlerts("/api/alerts");
     }
-    public List<AlertItem> fetchBySeverity(String sev)       throws IOException {
+    public List<AlertItem> fetchBySeverity(String sev)           throws IOException {
         return fetchAlerts("/api/alerts?severity=" + sev);
     }
-    public List<AlertItem> fetchByType(String type)          throws IOException {
+    public List<AlertItem> fetchByType(String type)              throws IOException {
         return fetchAlerts("/api/alerts?type=" + encode(type));
     }
-    public List<AlertItem> fetchBySourceIp(String ip)        throws IOException {
+    public List<AlertItem> fetchBySourceIp(String ip)            throws IOException {
         return fetchAlerts("/api/alerts?sourceIp=" + ip);
     }
-    public List<AlertItem> fetchBySourceMac(String mac)      throws IOException {
+    public List<AlertItem> fetchBySourceMac(String mac)          throws IOException {
         return fetchAlerts("/api/alerts?sourceMac=" + encode(mac));
     }
-    public List<AlertItem> fetchSince(long epochMs)          throws IOException {
+    public List<AlertItem> fetchSince(long epochMs)              throws IOException {
         return fetchAlerts("/api/alerts?sinceMs=" + epochMs);
     }
 
@@ -100,11 +99,69 @@ public class BackendClient {
         return list;
     }
 
+    /**
+     * Fetches deduplicated AlertSummary rows — what the dashboard actually displays.
+     *
+     * FIX: Now maps the `id` field from each summary row into AlertItem.id.
+     * Without this, the desktop had no way to call DELETE /api/alerts/summaries/{id}.
+     */
+    public List<AlertItem> fetchAlertSummaries() throws IOException {
+        List<AlertItem> list = new ArrayList<>();
+        for (JsonNode n : mapper.readTree(get("/api/alerts/summary"))) {
+            AlertItem item = new AlertItem(
+                formatTs(textOf(n, "lastSeen",    "")),
+                textOf(n, "severity",             ""),
+                textOf(n, "threatType",           ""),
+                textOf(n, "sourceIp",             ""),
+                textOf(n, "sourceMac",            ""),
+                textOf(n, "destIp",               ""),
+                textOf(n, "protocol",             ""),
+                textOf(n, "requestType",          ""),
+                intOf(n,  "packetCount",           0),
+                textOf(n, "details",              "")
+            );
+            // FIX: map the summary row's database id so delete works
+            item.setId(longOf(n, "id", 0L));
+            item.setOccurrences(intOf(n, "occurrenceCount", 1));
+            item.setFirstSeen(formatTs(textOf(n, "firstSeen", "")));
+            list.add(item);
+        }
+        return list;
+    }
+
     public JsonNode fetchStats() throws IOException {
         return mapper.readTree(get("/api/alerts/stats"));
     }
 
-    // ── MY WHITELIST ─────────────────────────────────────────────────────────
+    /**
+     * Deletes a single AlertSummary row by its id.
+     * Calls DELETE /api/alerts/summaries/{id}.
+     *
+     * FIX: This is the correct delete method. Previously only DELETE /api/alerts
+     * (clear-all) existed. The desktop now calls this per-row so individual
+     * alerts can be dismissed without wiping the entire table.
+     */
+    public void deleteAlertSummary(long id) throws IOException {
+        delete("/api/alerts/summaries/" + id);
+    }
+
+    /**
+     * Clears ALL alert summaries and raw alerts.
+     * Calls DELETE /api/alerts.
+     */
+    public void clearAlerts() throws IOException {
+        Request req = new Request.Builder()
+            .url(baseUrl + "/api/alerts")
+            .header("Authorization", "Bearer " + jwtToken)
+            .delete()
+            .build();
+        try (Response resp = http.newCall(req).execute()) {
+            if (!resp.isSuccessful())
+                throw new IOException("Clear failed: " + resp.code());
+        }
+    }
+
+    // ── MY WHITELIST ──────────────────────────────────────────────────────
 
     public List<MyWhitelistItem> fetchMyWhitelist() throws IOException {
         List<MyWhitelistItem> list = new ArrayList<>();
@@ -130,7 +187,7 @@ public class BackendClient {
         delete("/api/my-whitelist/" + id);
     }
 
-    // ── ORG WHITELIST ─────────────────────────────────────────────────────────
+    // ── ORG WHITELIST ─────────────────────────────────────────────────────
 
     public List<OrgWhitelistItem> fetchOrgWhitelist() throws IOException {
         List<OrgWhitelistItem> list = new ArrayList<>();
@@ -149,11 +206,11 @@ public class BackendClient {
         return list;
     }
 
-    public void approveOrg(long id)    throws IOException { patch("/api/org-whitelist/" + id + "/approve"); }
-    public void approveAllOrgs()       throws IOException { patch("/api/org-whitelist/approve-all"); }
+    public void approveOrg(long id)     throws IOException { patch("/api/org-whitelist/" + id + "/approve"); }
+    public void approveAllOrgs()        throws IOException { patch("/api/org-whitelist/approve-all"); }
     public void deleteOrgEntry(long id) throws IOException { delete("/api/org-whitelist/" + id); }
 
-    // ── FORENSIC CASES ────────────────────────────────────────────────────────
+    // ── FORENSIC CASES ────────────────────────────────────────────────────
 
     public List<CaseItem> fetchCases()                         throws IOException {
         return fetchCases("/api/forensics/cases");
@@ -206,7 +263,7 @@ public class BackendClient {
         put("/api/forensics/cases/" + id, body);
     }
 
-    // ── FLAGGED IPs ───────────────────────────────────────────────────────────
+    // ── FLAGGED IPs ───────────────────────────────────────────────────────
 
     public List<FlaggedIpItem> fetchFlaggedIps() throws IOException {
         List<FlaggedIpItem> list = new ArrayList<>();
@@ -224,7 +281,17 @@ public class BackendClient {
         return list;
     }
 
-    // ── HTTP HELPERS ──────────────────────────────────────────────────────────
+    // ── IP PROFILE / TIMELINE ─────────────────────────────────────────────
+
+    public JsonNode getIpProfile(String ip) throws Exception {
+        return mapper.readTree(get("/api/alerts/ip-profile/" + ip));
+    }
+
+    public JsonNode getTimeline(String ip) throws Exception {
+        return mapper.readTree(get("/api/alerts/timeline/" + ip));
+    }
+
+    // ── HTTP HELPERS ──────────────────────────────────────────────────────
 
     private String get(String path) throws IOException {
         Request req = new Request.Builder()
@@ -281,14 +348,7 @@ public class BackendClient {
         }
     }
 
-    // ── JSON helpers — replaces all deprecated asText(String) calls ──────────
-    //
-    // Why: Jackson's JsonNode.asText(String defaultValue) was deprecated because
-    // callers often accidentally used it on null nodes without realising that
-    // node.path("field") already returns a MissingNode (never null).
-    // The safe pattern is: get the node, check isNull/isMissingNode, then asText().
-    //
-    // These three helpers centralise that pattern so every field read is one line.
+    // ── JSON helpers ──────────────────────────────────────────────────────
 
     private static String textOf(JsonNode node, String field, String defaultValue) {
         JsonNode n = node.get(field);
@@ -310,8 +370,6 @@ public class BackendClient {
         return (n != null && !n.isNull() && !n.isMissingNode()) ? n.asBoolean() : defaultValue;
     }
 
-    // ── Misc helpers ──────────────────────────────────────────────────────────
-
     private String formatTs(String iso) {
         try {
             return FMT.format(Instant.parse(iso));
@@ -326,33 +384,5 @@ public class BackendClient {
         } catch (Exception e) {
             return s;
         }
-    }
-    public JsonNode getIpProfile(String ip) throws Exception {
-        return mapper.readTree(get("/api/alerts/ip-profile/" + ip));
-    }
-
-    public JsonNode getTimeline(String ip) throws Exception {
-        return mapper.readTree(get("/api/alerts/timeline/" + ip));
-    }
-    public List<AlertItem> fetchAlertSummaries() throws IOException {
-        List<AlertItem> list = new ArrayList<>();
-        for (JsonNode n : mapper.readTree(get("/api/alerts/summary"))) {
-            AlertItem item = new AlertItem(
-                formatTs(textOf(n, "lastSeen", "")),
-                textOf(n, "severity", ""),
-                textOf(n, "threatType", ""),
-                textOf(n, "sourceIp", ""),
-                textOf(n, "sourceMac", ""),
-                textOf(n, "destIp", ""),
-                textOf(n, "protocol", ""),
-                textOf(n, "requestType", ""),
-                intOf(n, "packetCount", 0),
-                textOf(n, "details", "")
-            );
-            item.setOccurrences(intOf(n, "occurrenceCount", 1));
-            item.setFirstSeen(formatTs(textOf(n, "firstSeen", "")));
-            list.add(item);
-        }
-        return list;
     }
 }

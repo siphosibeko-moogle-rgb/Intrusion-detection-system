@@ -15,7 +15,7 @@ public class AttackTimelineBuilder {
     public enum Phase {
         RECONNAISSANCE("Reconnaissance"),
         SCANNING      ("Scanning"),
-        EXPLOITATION  ("⚔Exploitation"),
+        EXPLOITATION  ("Exploitation"),
         C2            ("Command & Control"),
         EXFILTRATION  ("Data Exfiltration"),
         UNKNOWN       ("Unknown Activity");

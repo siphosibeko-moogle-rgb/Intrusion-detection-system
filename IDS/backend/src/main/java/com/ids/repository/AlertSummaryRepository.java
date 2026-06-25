@@ -15,6 +15,13 @@ public interface AlertSummaryRepository extends JpaRepository<AlertSummary, Long
     List<AlertSummary> findBySourceIpOrderByLastSeenDesc(String sourceIp);
 
     /**
+     * FIX: Added so AlertController.stats() counts from alert_summary
+     * instead of the raw alerts table. This makes dashboard counters
+     * drop immediately after a summary row is deleted.
+     */
+    long countBySeverity(String severity);
+
+    /**
      * Atomic upsert. ON CONFLICT resolves the race between concurrent
      * detector threads hitting the same (sourceIp, threatType) pair —
      * Postgres serializes on the unique index's row lock, so no
@@ -45,17 +52,17 @@ public interface AlertSummaryRepository extends JpaRepository<AlertSummary, Long
         RETURNING *
         """, nativeQuery = true)
     AlertSummary upsert(
-        @Param("sourceIp") String sourceIp,
-        @Param("threatType") String threatType,
-        @Param("severity") String severity,
-        @Param("sourceMac") String sourceMac,
-        @Param("destIp") String destIp,
-        @Param("destMac") String destMac,
-        @Param("protocol") String protocol,
-        @Param("requestType") String requestType,
-        @Param("details") String details,
-        @Param("packetCount") int packetCount,
-        @Param("windowMs") long windowMs,
-        @Param("timestamp") Instant timestamp
+        @Param("sourceIp")    String  sourceIp,
+        @Param("threatType")  String  threatType,
+        @Param("severity")    String  severity,
+        @Param("sourceMac")   String  sourceMac,
+        @Param("destIp")      String  destIp,
+        @Param("destMac")     String  destMac,
+        @Param("protocol")    String  protocol,
+        @Param("requestType") String  requestType,
+        @Param("details")     String  details,
+        @Param("packetCount") int     packetCount,
+        @Param("windowMs")    long    windowMs,
+        @Param("timestamp")   Instant timestamp
     );
 }

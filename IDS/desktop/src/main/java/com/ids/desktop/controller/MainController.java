@@ -313,15 +313,18 @@ public class MainController implements Initializable {
 
     //DATA LOADING
     private void loadAllData() {
-        dataLoader.loadAlerts(this::onAlertsLoaded, this::updateStats,
+        // Only ever load summaries – each row is unique by (sourceIp, threatType).
+        // loadAlerts() returned raw events (one row per detection) and was the
+        // source of the duplicate-row race: whichever HTTP response arrived last
+        // won the setAll() call, sometimes overwriting the deduped view.
+        dataLoader.loadAlertSummaries(this::onAlertsLoaded, this::updateStats,
                 msg -> handleSessionError("Alert load failed", msg));
         dataLoader.loadWhitelist(this::onWhitelistLoaded,
                 msg -> System.err.println("[Desktop] Whitelist load error: " + msg));
         dataLoader.loadCases(caseEntries::setAll,
                 msg -> System.err.println("[Desktop] Cases load error: " + msg));
-        dataLoader.loadAlertSummaries(this::onAlertsLoaded, this::updateStats,
-                msg -> handleSessionError("Alert load failed", msg));
     }
+
 
     private void onAlertsLoaded(List<AlertItem> items) {
         List<AlertItem> capped = items.size() > 2000 ? items.subList(0, 2000) : items;
@@ -334,52 +337,79 @@ public class MainController implements Initializable {
     private void startLiveFeed() {
         try {
             String wsUrl = BACKEND_URL
-                    .replace("http://",  "ws://")
+                    .replace("http://", "ws://")
                     .replace("https://", "wss://")
                     + "/ws/websocket";
-            wsFeed = new LiveFeedClient(wsUrl, "", this::onAlertReceived);
+
+            wsFeed = new LiveFeedClient(
+                    wsUrl,
+                    this::onAlertReceived,
+                    null,
+                    null,
+                    this::onAlertsCleared
+            );
+
             wsFeed.connect();
+
         } catch (Exception e) {
             System.err.println("[Desktop] WebSocket connect failed: " + e.getMessage());
         }
     }
 
     private void onAlertReceived(JsonNode node) {
-        String ts       = FMT.format(Instant.now());
-        String severity = node.path("severity").asText();
-        String type     = node.path("threatType").asText();
-        String srcIp    = node.path("sourceIp").asText();
-
+        // AlertSummary fields – use server-side detection timestamps, not client
+        // wall-clock.  fmtInstantSafe() falls back to "now" if the field is absent.
+        String ts        = fmtInstantSafe(node.path("lastSeen").asText(""));
+        String firstSeen = fmtInstantSafe(node.path("firstSeen").asText(""));
+        String severity  = node.path("severity").asText();
+        String type      = node.path("threatType").asText();
+        String srcIp     = node.path("sourceIp").asText();
+     
         Platform.runLater(() -> {
+            // Live-feed strip (unbounded log – still uses local receipt time is fine)
             liveEntries.add(0, String.format("[%s] %s %s from %s",
-                    ts, severity.isEmpty() ? "?" : severity,
-                    type.isEmpty() ? "?" : type, srcIp.isEmpty() ? "?" : srcIp));
+                    ts,
+                    severity.isEmpty() ? "?" : severity,
+                    type.isEmpty()     ? "?" : type,
+                    srcIp.isEmpty()    ? "?" : srcIp));
             if (liveEntries.size() > MAX_LIVE_ENTRIES)
                 liveEntries.remove(liveEntries.size() - 1);
-
-            AlertItem item = new AlertItem(ts, severity, type, srcIp,
-                    node.path("sourceMac").asText(), node.path("destIp").asText(),
-                    node.path("protocol").asText(), node.path("requestType").asText(),
-                    node.path("packetCount").asInt(0), node.path("details").asText());
+     
+            // Build the AlertItem from the AlertSummary payload
+            AlertItem item = new AlertItem(
+                    ts, severity, type, srcIp,
+                    node.path("sourceMac").asText(),
+                    node.path("destIp").asText(),
+                    node.path("protocol").asText(),
+                    node.path("requestType").asText(),
+                    node.path("packetCount").asInt(0),
+                    node.path("details").asText());
+     
+            // occurrenceCount comes from the upserted AlertSummary row
             item.setOccurrences(node.path("occurrenceCount").asInt(1));
-            item.setFirstSeen(FMT.format(Instant.now()));
-            alertManager.upsertAlert(item);
+            // firstSeen is from the DB's first_seen column, not today's clock
+            item.setFirstSeen(firstSeen);
+     
+            alertManager.upsertAlert(item);   // deduplicates by (sourceIp, threatType)
+     
             long now = System.currentTimeMillis();
             if (now - alertManager.getLastAttackerRebuild() > 5_000)
                 alertManager.rebuildAttackers();
         });
     }
 
+
     //POLLING
 
     private void startPolling() {
         scheduler.scheduleAtFixedRate(() -> {
-            if (isReady()) dataLoader.loadAlerts(
+            if (isReady()) dataLoader.loadAlertSummaries(
                     this::onAlertsLoaded,
                     this::updateStats,
                     msg -> handleSessionError("Poll failed", msg));
         }, 30, 30, TimeUnit.SECONDS);
     }
+
 
     //STATS
     private void updateStats(JsonNode stats) {
@@ -680,4 +710,33 @@ public class MainController implements Initializable {
             backend.invalidateSession();                     // isReady() now correctly returns false,
         }                                                      // so polling stops hammering a dead token
     }
+    private String fmtInstantSafe(String raw) {
+        if (raw == null || raw.isBlank()) return FMT.format(Instant.now());
+        try {
+            return FMT.format(Instant.parse(raw));
+        } catch (Exception e) {
+            return raw; // return whatever the server sent rather than crashing
+        }
+    }
+    @FXML
+    private void handleClearAlerts() {
+        allAlerts.clear();    // clears the TableView — DB untouched
+        attackers.clear();    // clears the Attackers tab — DB untouched
+        setStatus("View cleared. Alert history is preserved in the database.", false);
+    }
+
+    // Wire the WS onCleared callback to this in initialize():
+    // wsFeed = new LiveFeedClient(wsUrl, token, this::onAlertReceived,
+//         this::onWsConnected, this::onWsDisconnected, this::onAlertsCleared);
+
+    private void onAlertsCleared() {
+        allAlerts.clear();
+        attackers.clear();
+
+        alertManager.rebuildIndex();
+        alertManager.rebuildAttackers();
+
+        setStatus("Alerts cleared remotely.", true);
+    }
+
 }
