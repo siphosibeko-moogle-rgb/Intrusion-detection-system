@@ -23,6 +23,7 @@ public class BackendClient {
     private static final DateTimeFormatter FMT =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                          .withZone(ZoneId.systemDefault());
+    
 
     private final String       baseUrl;
     private final OkHttpClient http;
@@ -58,6 +59,29 @@ public class BackendClient {
 
     public boolean isLoggedIn() { return !jwtToken.isEmpty(); }
     public String  getBaseUrl() { return baseUrl; }
+
+    // ── CASE DETAIL PANEL SUPPORT ────────────────────────────────────────────
+    // CaseDetailPanel.java (com.ids.desktop.controller) needs raw GET/POST/PUT/
+    // DELETE access with the JSON body already serialized by the caller (unlike
+    // the typed methods above, which build their own bodies). These are thin
+    // public wrappers around the existing private helpers — NOT a general-purpose
+    // HTTP client. Keep call sites limited to CaseDetailPanel; if another class
+    // needs backend access, add a typed method next to the other typed methods
+    // instead of reaching for these.
+
+    /** Raw GET, returns the response body as a JSON string. */
+    public String getRaw(String path) throws IOException {
+        return get(path);
+    }
+
+    /** Raw POST with a pre-serialized JSON body. */
+    public void postJson(String path, String json) throws IOException {
+        post(path, json);
+    }
+
+    // put(...) and delete(...) below are now public — CaseDetailPanel calls
+    // them directly for case updates and note deletion.
+
 
     // ── ALERTS ────────────────────────────────────────────────────────────
 
@@ -212,7 +236,7 @@ public class BackendClient {
 
     // ── FORENSIC CASES ────────────────────────────────────────────────────
 
-    public List<CaseItem> fetchCases()                         throws IOException {
+    public List<CaseItem> fetchCases() throws IOException {
         return fetchCases("/api/forensics/cases");
     }
     public List<CaseItem> fetchCasesByStatus(String status)    throws IOException {
@@ -224,21 +248,28 @@ public class BackendClient {
 
     private List<CaseItem> fetchCases(String path) throws IOException {
         List<CaseItem> list = new ArrayList<>();
+
         for (JsonNode n : mapper.readTree(get(path))) {
-            list.add(new CaseItem(
-                longOf(n,  "id",          0L),
-                textOf(n,  "caseNumber",  ""),
-                textOf(n,  "title",       ""),
-                textOf(n,  "status",      ""),
-                textOf(n,  "severity",    ""),
-                textOf(n,  "suspectIp",   ""),
-                textOf(n,  "suspectMac",  ""),
-                textOf(n,  "threatType",  ""),
-                textOf(n,  "assignedTo",  ""),
+
+            CaseItem item = new CaseItem(
+                longOf(n, "id", 0L),
+                textOf(n, "caseNumber", ""),
+                textOf(n, "title", ""),
+                textOf(n, "status", ""),
+                textOf(n, "severity", ""),
+                textOf(n, "suspectIp", ""),
+                textOf(n, "suspectMac", ""),
+                textOf(n, "threatType", ""),
+                textOf(n, "assignedTo", ""),
                 formatTs(textOf(n, "openedAt", "")),
-                textOf(n,  "findings",    "")
-            ));
+                textOf(n, "findings", "")
+            );
+
+            item.setAlertCount(longOf(n, "alertCount", 0));
+
+            list.add(item);
         }
+
         return list;
     }
 
@@ -316,7 +347,7 @@ public class BackendClient {
         }
     }
 
-    private void put(String path, String json) throws IOException {
+    public void put(String path, String json) throws IOException {
         Request req = new Request.Builder()
             .url(baseUrl + path)
             .addHeader("Authorization", "Bearer " + jwtToken)
@@ -338,7 +369,7 @@ public class BackendClient {
         }
     }
 
-    private void delete(String path) throws IOException {
+    public void delete(String path) throws IOException {
         Request req = new Request.Builder()
             .url(baseUrl + path)
             .addHeader("Authorization", "Bearer " + jwtToken)

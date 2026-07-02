@@ -91,7 +91,7 @@ public class AlertService {
         stats.put("byType", byType);
 
         Map<String, Long> bySev = new LinkedHashMap<>();
-        repo.countBySeverity().forEach(r -> bySev.put((String) r[0], (Long) r[1]));
+        repo.countBySeverityGrouped().forEach(r -> bySev.put((String) r[0], (Long) r[1]));
         stats.put("bySeverity", bySev);
 
         List<Map<String, Object>> topAttackers = new ArrayList<>();

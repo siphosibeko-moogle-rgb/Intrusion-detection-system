@@ -14,7 +14,6 @@ import java.util.function.Consumer;
  */
 public class DataLoader {
 
-    // A functional interface for the 3-list whitelist callback
     @FunctionalInterface
     public interface WhitelistCallback {
         void accept(List<MyWhitelistItem> my,
@@ -34,12 +33,13 @@ public class DataLoader {
     }
 
     public void loadAlerts(Consumer<List<AlertItem>> onAlerts,
-                           Consumer<JsonNode>        onStats,
-                           Consumer<String>          onError) {
+                           Consumer<JsonNode> onStats,
+                           Consumer<String> onError) {
         thread("ids-load-alerts", () -> {
             try {
                 List<AlertItem> items = backend.fetchAlerts();
-                JsonNode stats        = backend.fetchStats();
+                JsonNode stats = backend.fetchStats();
+
                 Platform.runLater(() -> {
                     onAlerts.accept(items);
                     onStats.accept(stats);
@@ -50,51 +50,70 @@ public class DataLoader {
         });
     }
 
-    // ← KEY CHANGE: single WhitelistCallback instead of 3 separate consumers
     public void loadWhitelist(WhitelistCallback onLoaded,
-                              Consumer<String>  onError) {
+                              Consumer<String> onError) {
         thread("ids-load-whitelist", () -> {
             try {
-                List<MyWhitelistItem>  myItems  = backend.fetchMyWhitelist();
+                List<MyWhitelistItem> myItems = backend.fetchMyWhitelist();
                 List<OrgWhitelistItem> orgItems = backend.fetchOrgWhitelist();
-                List<FlaggedIpItem>    flagged  = backend.fetchFlaggedIps();
-                Platform.runLater(() -> onLoaded.accept(myItems, orgItems, flagged));
+                List<FlaggedIpItem> flagged = backend.fetchFlaggedIps();
+
+                Platform.runLater(() ->
+                        onLoaded.accept(myItems, orgItems, flagged));
+
             } catch (Exception e) {
                 Platform.runLater(() -> onError.accept(e.getMessage()));
             }
         });
     }
 
+    /**
+     * Loads forensic cases.
+     * BackendClient is responsible for mapping JSON into CaseItem objects.
+     */
     public void loadCases(Consumer<List<CaseItem>> onCases,
-                          Consumer<String>         onError) {
+                          Consumer<String> onError) {
+
         thread("ids-load-cases", () -> {
             try {
                 List<CaseItem> items = backend.fetchCases();
+
                 Platform.runLater(() -> onCases.accept(items));
+
             } catch (Exception e) {
                 Platform.runLater(() -> onError.accept(e.getMessage()));
             }
         });
     }
 
-    public void login(String user, String pass,
-                      Runnable         onSuccess,
+    public void login(String user,
+                      String pass,
+                      Runnable onSuccess,
                       Consumer<String> onFailure) {
+
         thread("ids-login-thread", () -> {
             try {
                 boolean ok = backend.login(user, pass);
+
                 Platform.runLater(() -> {
-                    if (ok) onSuccess.run();
-                    else    onFailure.accept("Invalid credentials");
+                    if (ok) {
+                        onSuccess.run();
+                    } else {
+                        onFailure.accept("Invalid credentials");
+                    }
                 });
+
             } catch (Exception e) {
                 Platform.runLater(() -> onFailure.accept(e.getMessage()));
             }
         });
     }
 
-    public void submit(String threadName, ThrowingRunnable action,
-                       Runnable onSuccess, Consumer<String> onError) {
+    public void submit(String threadName,
+                       ThrowingRunnable action,
+                       Runnable onSuccess,
+                       Consumer<String> onError) {
+
         thread(threadName, () -> {
             try {
                 action.run();
@@ -105,22 +124,29 @@ public class DataLoader {
         });
     }
 
-    private void thread(String name, Runnable r) {
-        Thread t = new Thread(r, name);
+    public void loadAlertSummaries(Consumer<List<AlertItem>> onAlerts,
+                                   Consumer<JsonNode> onStats,
+                                   Consumer<String> onError) {
+
+        thread("ids-load-alert-summaries", () -> {
+            try {
+                List<AlertItem> items = backend.fetchAlertSummaries();
+                JsonNode stats = backend.fetchStats();
+
+                Platform.runLater(() -> {
+                    onAlerts.accept(items);
+                    onStats.accept(stats);
+                });
+
+            } catch (Exception e) {
+                Platform.runLater(() -> onError.accept(e.getMessage()));
+            }
+        });
+    }
+
+    private void thread(String name, Runnable runnable) {
+        Thread t = new Thread(runnable, name);
         t.setDaemon(true);
         t.start();
     }
-    public void loadAlertSummaries(Consumer<List<AlertItem>> onAlerts,
-            Consumer<JsonNode>        onStats,
-            Consumer<String>          onError) {
-					thread("ids-load-alert-summaries", () -> {
-					try {
-					List<AlertItem> items = backend.fetchAlertSummaries();
-					JsonNode stats        = backend.fetchStats();
-					Platform.runLater(() -> { onAlerts.accept(items); onStats.accept(stats); });
-					} catch (Exception e) {
-					Platform.runLater(() -> onError.accept(e.getMessage()));
-					}
-				});
-		}
 }

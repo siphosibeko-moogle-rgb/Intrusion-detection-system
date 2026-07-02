@@ -14,21 +14,24 @@ import java.util.stream.Collectors;
 
 public class AlertTableManager {
 
-    // The two tables this class manages
     private final TableView<AlertItem> alertTable;
     private final TableView<AlertItem> attackerTable;
 
-    // Filter fields — read-only references, never written here
-    private final TextField tfIp, tfMac, tfType;
+    private final TextField        tfIp, tfMac, tfType;
     private final ComboBox<String> cbSeverity, cbProtocol;
-    private final TextField tfFilterAtkIp;
+    private final TextField        tfFilterAtkIp;
 
-    // The shared observable lists — MainController holds the canonical reference
+    // Canonical lists owned by MainController — we only read/mutate, never replace
     private final ObservableList<AlertItem> allAlerts;
     private final ObservableList<AlertItem> attackers;
 
     private FilteredList<AlertItem> filteredAlerts;
     private long lastAttackerRebuild = 0L;
+
+    // ── Dedup index: (sourceIp\0threatType) → AlertItem ──────────────────────
+    // Kept in sync with allAlerts at all times.
+    // Used by upsertAlert() so we never do an O(n) scan per WS message.
+    private final Map<String, AlertItem> summaryIndex = new HashMap<>();
 
     public AlertTableManager(
             TableView<AlertItem> alertTable,
@@ -50,6 +53,7 @@ public class AlertTableManager {
         this.allAlerts     = allAlerts;
         this.attackers     = attackers;
     }
+
     public void setup(
             TableColumn<AlertItem, String>  colTimestamp,
             TableColumn<AlertItem, String>  colSeverity,
@@ -75,7 +79,7 @@ public class AlertTableManager {
     }
 
     private void setupAlertColumns(
-    		TableColumn<AlertItem, String>  colTimestamp,
+            TableColumn<AlertItem, String>  colTimestamp,
             TableColumn<AlertItem, String>  colSeverity,
             TableColumn<AlertItem, String>  colThreatType,
             TableColumn<AlertItem, String>  colSourceIp,
@@ -97,13 +101,11 @@ public class AlertTableManager {
         colRequestType.setCellValueFactory(new PropertyValueFactory<>("requestType"));
         colPackets    .setCellValueFactory(new PropertyValueFactory<>("packetCount"));
         colDetails    .setCellValueFactory(new PropertyValueFactory<>("details"));
-        
-		colOccurrences.setCellValueFactory(new PropertyValueFactory<>("occurrences"));
+        colOccurrences.setCellValueFactory(new PropertyValueFactory<>("occurrences"));
 
-        // Severity colour-coding — RED for critical, orange for high, etc.
+        // Severity colour-coding
         colSeverity.setCellFactory(col -> new TableCell<>() {
-            @Override
-            protected void updateItem(String s, boolean empty) {
+            @Override protected void updateItem(String s, boolean empty) {
                 super.updateItem(s, empty);
                 if (empty || s == null) { setText(null); setStyle(""); return; }
                 setText(s);
@@ -116,10 +118,9 @@ public class AlertTableManager {
             }
         });
 
-        // Cyan source IP — visually indicates it's the key field
+        // Source IP in cyan — visually marks it as the primary key field
         colSourceIp.setCellFactory(col -> new TableCell<>() {
-            @Override
-            protected void updateItem(String s, boolean empty) {
+            @Override protected void updateItem(String s, boolean empty) {
                 super.updateItem(s, empty);
                 setText(empty ? null : s);
                 setStyle(empty ? "" : "-fx-text-fill:#00d4ff; -fx-font-weight:bold;");
@@ -141,8 +142,7 @@ public class AlertTableManager {
         colAtkCount.setCellValueFactory(new PropertyValueFactory<>("packetCount"));
 
         colAtkIp.setCellFactory(col -> new TableCell<>() {
-            @Override
-            protected void updateItem(String val, boolean empty) {
+            @Override protected void updateItem(String val, boolean empty) {
                 super.updateItem(val, empty);
                 setText(empty ? null : val);
                 setStyle(empty ? "" : "-fx-text-fill:#ef4444; -fx-font-weight:bold;");
@@ -178,7 +178,7 @@ public class AlertTableManager {
         filteredAlerts.setPredicate(a -> {
             if (!ip.isEmpty()   && !a.getSourceIp().toLowerCase().contains(ip))   return false;
             if (!mac.isEmpty()  && (a.getSourceMac() == null
-                                 || !a.getSourceMac().toLowerCase().contains(mac))) return false;
+                                 || !a.getSourceMac().toLowerCase().contains(mac)))  return false;
             if (!type.isEmpty() && !a.getThreatType().toLowerCase().contains(type)) return false;
             if (severity != null && !severity.isEmpty()
                                  && !severity.equals(a.getSeverity()))              return false;
@@ -187,6 +187,68 @@ public class AlertTableManager {
             return true;
         });
     }
+
+    // ── INDEX MANAGEMENT ──────────────────────────────────────────────────────
+
+    private String keyOf(String sourceIp, String threatType) {
+        return sourceIp + "\u0000" + threatType;
+    }
+
+    /**
+     * Rebuild the dedup index after allAlerts.setAll() on initial load / refresh.
+     * Must be called on the JavaFX thread.
+     */
+    public void rebuildIndex() {
+        summaryIndex.clear();
+        for (AlertItem item : allAlerts)
+            summaryIndex.put(keyOf(item.getSourceIp(), item.getThreatType()), item);
+    }
+
+    /**
+     * Upsert: update an existing row or prepend a new one.
+     * Called for every WebSocket push — O(1) via the index, never O(n).
+     * Must be called on the JavaFX thread.
+     */
+    public void upsertAlert(AlertItem incoming) {
+        String key = keyOf(incoming.getSourceIp(), incoming.getThreatType());
+        AlertItem existing = summaryIndex.get(key);
+        if (existing != null) {
+            // Update in place — JavaFX observes the property changes automatically
+            existing.setOccurrences(incoming.getOccurrences());
+            existing.setTimestamp(incoming.getTimestamp());
+            existing.setFirstSeen(incoming.getFirstSeen());
+            existing.setId(incoming.getId()); // keep id current
+            // Bubble to top so most-recently-active alert is always row 0
+            allAlerts.remove(existing);
+            allAlerts.add(0, existing);
+        } else {
+            summaryIndex.put(key, incoming);
+            allAlerts.add(0, incoming);
+        }
+    }
+
+    /**
+     * FIX: Remove an alert from the table by its database summary id.
+     *
+     * Called when the WebSocket delivers a deletion event:
+     *   {"id": 42}  on /topic/alerts/deleted
+     *
+     * Why removeIf instead of a Map lookup:
+     *   The summaryIndex is keyed by (sourceIp, threatType).  We don't have those
+     *   fields in the deletion payload — only the id.  removeIf is O(n) but n is
+     *   at most 2000 rows, so it is fast enough.  An id→key secondary index would
+     *   make it O(1) but adds complexity that is not needed at this scale.
+     *
+     * Must be called on the JavaFX thread.
+     */
+    public void removeById(long id) {
+        // Remove from the index first so upsertAlert doesn't resurrect the row
+        summaryIndex.entrySet().removeIf(e -> e.getValue().getId() == id);
+        // Remove from the observable list — JavaFX TableView updates automatically
+        allAlerts.removeIf(a -> a.getId() == id);
+    }
+
+    // ── ATTACKER REBUILD ──────────────────────────────────────────────────────
 
     public void rebuildAttackers() {
         Map<String, Long> counts = allAlerts.stream()
@@ -216,32 +278,5 @@ public class AlertTableManager {
         tfIp.clear(); tfMac.clear(); tfType.clear();
         cbSeverity.getSelectionModel().clearSelection();
         cbProtocol.getSelectionModel().clearSelection();
-    }
-    private final Map<String, AlertItem> summaryIndex = new HashMap<>();
-    private String keyOf(String sourceIp, String threatType) {
-        return sourceIp + "\u0000" + threatType;
-    }
-
-    /** Call once after allAlerts.setAll(...) on initial load / refresh. */
-    public void rebuildIndex() {
-        summaryIndex.clear();
-        for (AlertItem item : allAlerts)
-            summaryIndex.put(keyOf(item.getSourceIp(), item.getThreatType()), item);
-    }
-
-    /** Call for every WebSocket push instead of allAlerts.add(0, item). */
-    public void upsertAlert(AlertItem incoming) {
-        String key = keyOf(incoming.getSourceIp(), incoming.getThreatType());
-        AlertItem existing = summaryIndex.get(key);
-        if (existing != null) {
-            existing.setOccurrences(incoming.getOccurrences());
-            existing.setTimestamp(incoming.getTimestamp());   // last seen
-            existing.setFirstSeen(incoming.getFirstSeen());
-            allAlerts.remove(existing);
-            allAlerts.add(0, existing);   // bubble most-recently-active to top
-        } else {
-            summaryIndex.put(key, incoming);
-            allAlerts.add(0, incoming);
-        }
     }
 }

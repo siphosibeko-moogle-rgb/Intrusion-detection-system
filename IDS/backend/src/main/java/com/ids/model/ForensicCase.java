@@ -3,15 +3,12 @@ package com.ids.model;
 import jakarta.persistence.*;
 import java.time.Instant;
 
-/**
- * Forensic investigation case.
- * Status: OPEN | INVESTIGATING | CLOSED | ARCHIVED
- */
 @Entity
 @Table(name = "forensic_cases")
 public class ForensicCase {
 
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(unique = true, nullable = false)
@@ -23,13 +20,30 @@ public class ForensicCase {
     @Column(length = 2000)
     private String description;
 
-    private String status;
+    @Column(nullable = false)
+    private String status = "OPEN";
+
+    @Column(length = 20)
     private String severity;
+
+    private String priority = "MEDIUM";
+
     private String assignedTo;
     private String createdBy;
+
     private String suspectIp;
     private String suspectMac;
     private String threatType;
+
+    @Column(name = "alert_count")
+    private int alertCount = 0;
+
+    @Column(name = "first_seen")
+    private Instant firstSeen;
+
+    @Column(name = "last_seen")
+    private Instant lastSeen;
+
     private Instant openedAt;
     private Instant closedAt;
     private Instant lastUpdated;
@@ -39,95 +53,69 @@ public class ForensicCase {
 
     @PrePersist
     public void prePersist() {
-        if (openedAt   == null) openedAt    = Instant.now();
-        if (lastUpdated== null) lastUpdated = Instant.now();
-        if (status     == null) status      = "OPEN";
+        Instant now = Instant.now();
+
+        if (openedAt == null) openedAt = now;
+        if (lastUpdated == null) lastUpdated = now;
+        if (firstSeen == null) firstSeen = now;
     }
 
     @PreUpdate
-    public void preUpdate() { 
-    	lastUpdated = Instant.now();
-    	}
+    public void preUpdate() {
+        lastUpdated = Instant.now();
+        lastSeen = Instant.now();
+    }
 
-    public Long getId() { 
-    	return id; 
-    	}
-    public String getCaseNumber() { 
-    	return caseNumber; 
-    	}
-    public String getTitle(){ 
-    	return title; 
-    	}
-    public String getDescription() { 
-    	return description; 
-    	}
-    public String getStatus() { 
-    	return status; 
-    	}
-    public String getSeverity() { 
-    	return severity; 
-    	}
-    public String getAssignedTo(){ 
-    	return assignedTo; 
-    	}
-    public String getCreatedBy() { 
-    	return createdBy; }
-    public String  getSuspectIp() { 
-    	return suspectIp; 
-    	}
-    public String getSuspectMac()  { 
-    	return suspectMac; 
-    	}
-    public String getThreatType(){
-    	return threatType;
-}
-    public Instant getOpenedAt() { 
-    	return openedAt; 
-    	}
-    public Instant getClosedAt(){ 
-    	return closedAt; 
-    	}
-    public Instant getLastUpdated() { 
-    	return lastUpdated; 
-    	}
-    public String getFindings(){ 
-    	return findings; 
-    	}
+    public Long getId() { return id; }
 
-    public void setCaseNumber(String v){ 
-    	caseNumber  = v; 
-    	}
-    public void setTitle(String v){ 
-    	title   = v;
-    	}
-    public void setDescription(String v) { 
-    	description = v; 
-    	}
-    public void setStatus(String v) { 
-    	status      = v; 
-    	}
-    public void setSeverity(String v) { 
-    	severity    = v; 
-    	}
-    public void setAssignedTo(String v){ 
-    	assignedTo  = v; 
-    	}
-    public void setCreatedBy(String v) { 
-    	createdBy   = v;
-    	}
-    public void setSuspectIp(String v) { 
-    	suspectIp   = v; 
-    	}
-    public void setSuspectMac(String v) { 
-    	suspectMac  = v; 
-    	}
-    public void setThreatType(String v) { 
-    	threatType  = v; 
-    	}
-    public void setClosedAt(Instant v) { 
-    	closedAt    = v; 
-    	}
-    public void setFindings(String v) { 
-    	findings    = v; 
-    	}
+    public String getCaseNumber() { return caseNumber; }
+    public void setCaseNumber(String v) { this.caseNumber = v; }
+
+    public String getTitle() { return title; }
+    public void setTitle(String v) { this.title = v; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String v) { this.description = v; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String v) { this.status = v; }
+
+    public String getSeverity() { return severity; }
+    public void setSeverity(String v) { this.severity = v; }
+
+    public String getPriority() { return priority; }
+    public void setPriority(String v) { this.priority = v; }
+
+    public String getAssignedTo() { return assignedTo; }
+    public void setAssignedTo(String v) { this.assignedTo = v; }
+
+    public String getCreatedBy() { return createdBy; }
+    public void setCreatedBy(String v) { this.createdBy = v; }
+
+    public String getSuspectIp() { return suspectIp; }
+    public void setSuspectIp(String v) { this.suspectIp = v; }
+
+    public String getSuspectMac() { return suspectMac; }
+    public void setSuspectMac(String v) { this.suspectMac = v; }
+
+    public String getThreatType() { return threatType; }
+    public void setThreatType(String v) { this.threatType = v; }
+
+    public int getAlertCount() { return alertCount; }
+    public void setAlertCount(int n) { this.alertCount = n; }
+
+    public Instant getFirstSeen() { return firstSeen; }
+    public void setFirstSeen(Instant t) { this.firstSeen = t; }
+
+    public Instant getLastSeen() { return lastSeen; }
+    public void setLastSeen(Instant t) { this.lastSeen = t; }
+
+    public Instant getOpenedAt() { return openedAt; }
+    public Instant getClosedAt() { return closedAt; }
+    public void setClosedAt(Instant v) { this.closedAt = v; }
+
+    public Instant getLastUpdated() { return lastUpdated; }
+
+    public String getFindings() { return findings; }
+    public void setFindings(String v) { this.findings = v; }
 }
