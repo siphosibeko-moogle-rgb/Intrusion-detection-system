@@ -5,6 +5,7 @@ import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
+import com.ids.network.NetworkWhitelist;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -15,41 +16,67 @@ import java.util.concurrent.ConcurrentHashMap;
  * Detects beaconing — malware phoning home at regular clock-like intervals.
  *
  * Logic:
- *   Track outbound connection timestamps per (srcIP → dstIP:port).
- *   Once we have MIN_SAMPLES hits, compute jitter (stddev / mean) of the
- *   inter-arrival gaps. Low jitter = suspiciously automated = beacon.
+ * Track outbound connection timestamps per (srcIP → dstIP:port).
+ * Once we have MIN_SAMPLES hits, compute jitter (stddev / mean) of the
+ * inter-arrival gaps. Low jitter = suspiciously automated = beacon.
+ *
+ * IMPORTANT CAVEAT — read before tuning JITTER_THRESH:
+ * Low-jitter fixed-interval traffic is also exactly what a lot of
+ * completely legitimate software looks like: monitoring agents, NTP sync,
+ * health checks, cloud backup check-ins, license servers, and OS/app
+ * update checkers all phone home on a fixed timer. Timing regularity
+ * ALONE cannot reliably separate malware from ordinary background
+ * agents — real products (Zeek, CrowdStrike) combine it with a second
+ * signal (destination reputation, certificate age, fleet-wide rarity of
+ * the destination). This detector doesn't have that second signal yet;
+ * treat every alert here as "worth a look," not "confirmed malicious."
+ *
+ * FIX: this engine's own housekeeping traffic (NetworkWhitelist's
+ * scheduled refresh against the backend, scheduleAtFixedRate every 30s
+ * in IDSEngine) is itself a textbook low-jitter beacon if the backend
+ * isn't on loopback. excludedDestinations lets known-legitimate periodic
+ * destinations (the IDS's own backend, monitoring servers, license
+ * servers) be configured out, via network.beacon.trusted.destinations
+ * in ids-whitelist.properties.
  */
 public class BeaconingDetector implements Detector {
 
-    private static final int    MIN_SAMPLES   = 5;
-    private static final long   MAX_GAP_MS    = 600_000L;  // ignore gaps > 10 min
-    private static final long   MIN_GAP_MS    = 5_000L;    // ignore gaps < 5 s
-    private static final double JITTER_THRESH = 0.10;      // stddev/mean <= 10% → alert
-    private static final long   COOLDOWN_MS   = 60_000L;
+    private static final int MIN_SAMPLES = 5;
+    private static final long MAX_GAP_MS = 600_000L; // ignore gaps > 10 min
+    private static final long MIN_GAP_MS = 5_000L; // ignore gaps < 5 s
+    private static final double JITTER_THRESH = 0.10; // stddev/mean <= 10% → alert
+    private static final long COOLDOWN_MS = 60_000L;
 
     // key = "srcIP->dstIP:port"
     private final Map<String, Deque<Long>> flowHistory = new ConcurrentHashMap<>();
-    private final Map<String, Long>        lastAlerts  = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
     private final AlertManager alertManager;
+    private final NetworkWhitelist whitelist;
 
-    public BeaconingDetector(AlertManager alertManager) {
+    public BeaconingDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
+        this.whitelist = whitelist;
     }
 
     public void analyze(PacketContext ctx) {
 
         if (!ctx.isTcp() && !ctx.isUdp()) return;
 
-        String srcIP  = ctx.getSrcIp();
-        String dstIP  = ctx.getDstIp();
+        String srcIP = ctx.getSrcIp();
+        String dstIP = ctx.getDstIp();
         String srcMac = ctx.getSrcMac();
         String dstMac = ctx.getDstMac();
-        int    port   = ctx.getDstPort();
-        long   now    = ctx.getTimestamp();
+        int port = ctx.getDstPort();
+        long now = ctx.getTimestamp();
 
         if (srcIP == null || dstIP == null) return;
         if (port <= 0 || port > 49151) return;
+
+        // FIX: skip known-legitimate periodic destinations (this engine's
+        // own backend, monitoring/license servers) before ever building up
+        // flow history for them — see class doc above.
+        if (whitelist.isTrustedBeaconDestination(dstIP)) return;
 
         String flowKey = srcIP + "->" + dstIP + ":" + port;
 
@@ -65,13 +92,13 @@ public class BeaconingDetector implements Detector {
 
             if (times.size() < MIN_SAMPLES + 1) return;
 
-            Long[]   arr  = times.toArray(new Long[0]);
+            Long[] arr = times.toArray(new Long[0]);
             double[] gaps = new double[arr.length - 1];
             for (int i = 0; i < gaps.length; i++) gaps[i] = arr[i + 1] - arr[i];
 
             for (double g : gaps) if (g < MIN_GAP_MS || g > MAX_GAP_MS) return;
 
-            double mean   = mean(gaps);
+            double mean = mean(gaps);
             double stddev = stddev(gaps, mean);
             double jitter = stddev / mean;
 
@@ -83,16 +110,16 @@ public class BeaconingDetector implements Detector {
                 lastAlerts.put(flowKey, now);
 
                 alertManager.raise(new ThreatEvent(
-                        ThreatType.BEACONING,
-                        srcIP, srcMac, dstIP, dstMac,
-                        times.size(),
-                        MAX_GAP_MS,
-                        String.format("Beacon: %s → %s:%d  interval=%.1fs  jitter=%.1f%%",
-                                srcIP, dstIP, port, mean / 1000.0, jitter * 100.0),
-                        Severity.HIGH,
-                        ctx.isTcp() ? "TCP" : "UDP",
-                        "BEACON",
-                        port
+                    ThreatType.BEACONING,
+                    srcIP, srcMac, dstIP, dstMac,
+                    times.size(),
+                    MAX_GAP_MS,
+                    String.format("Beacon: %s → %s:%d interval=%.1fs jitter=%.1f%%",
+                        srcIP, dstIP, port, mean / 1000.0, jitter * 100.0),
+                    Severity.HIGH,
+                    ctx.isTcp() ? "TCP" : "UDP",
+                    "BEACON",
+                    port
                 ));
 
                 times.clear();
@@ -113,7 +140,7 @@ public class BeaconingDetector implements Detector {
         flowHistory.entrySet().removeIf(e -> {
             synchronized (e.getValue()) {
                 return e.getValue().isEmpty() ||
-                       (now - e.getValue().peekLast()) > MAX_GAP_MS * 2;
+                    (now - e.getValue().peekLast()) > MAX_GAP_MS * 2;
             }
         });
         lastAlerts.entrySet().removeIf(e -> (now - e.getValue()) > COOLDOWN_MS * 2);

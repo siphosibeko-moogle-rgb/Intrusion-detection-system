@@ -208,4 +208,14 @@ public class AlertController {
     public ResponseEntity<?> timeline(@PathVariable String ip) {
         return ResponseEntity.ok(alertService.getBySourceIp(ip));
     }
+    /**
+     * GET /api/alerts/conversation?ip1=X&ip2=Y
+     * Returns every alert between two IPs, either direction, in chronological
+     * order. Reuses the same JSON shape as GET /api/alerts so the desktop
+     * client's existing alert-parsing code works unchanged.
+     */
+    @GetMapping("/conversation")
+    public ResponseEntity<?> getConversation(@RequestParam String ip1, @RequestParam String ip2) {
+        return ResponseEntity.ok(alertRepository.findConversation(ip1, ip2));
+    }
 }

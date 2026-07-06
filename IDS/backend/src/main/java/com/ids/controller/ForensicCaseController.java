@@ -239,4 +239,25 @@ public class ForensicCaseController {
 
         return ResponseEntity.ok(Map.of("message", "Packet linked successfully"));
     }
+    /**
+     * GET /api/forensics/cases/alert-groups
+     * Powers the "Create Cases from Alerts" screen — one row per source IP
+     * with alert stats and whether a case already exists for it.
+     */
+    @GetMapping("/cases/alert-groups")
+    public ResponseEntity<?> getAlertGroups() {
+        return ResponseEntity.ok(service.getAlertGroupsForCaseCreation());
+    }
+
+    /**
+     * POST /api/forensics/cases/from-ip/{ip}
+     * Bulk case creation entry point. Idempotent by design — calling this
+     * twice for the same IP returns the existing case both times rather
+     * than erroring or duplicating.
+     */
+    @PostMapping("/cases/from-ip/{ip}")
+    public ResponseEntity<?> createCaseFromIp(@PathVariable String ip, Authentication auth) {
+        String username = (auth != null) ? auth.getName() : "system";
+        return ResponseEntity.ok(service.createFromIpGroup(ip, username));
+    }
 }

@@ -103,6 +103,7 @@ public class MainController implements Initializable {
     @FXML private TextField     tfUsername;
     @FXML private PasswordField pfPassword;
     @FXML private Label         lblLoginStatus;
+    @FXML private void onOpenAlertGroups() { openAlertGroups(); }
 
     // ── STATE ─────────────────────────────────────────────────────────────────
     private BackendClient        backend;
@@ -110,8 +111,9 @@ public class MainController implements Initializable {
     private DataLoader           dataLoader;
     private AlertTableManager    alertManager;
     private IpInvestigationPanel investigationPanel;
-    private CaseDetailPanel caseDetailPanel;
-    private SplitPane            mainSplitPane;
+    private CaseDetailPanel   caseDetailPanel;
+    private AlertGroupsPanel  alertGroupsPanel;
+    private StackPane         sidePanelStack;     
 
     private final ObservableList<AlertItem>        allAlerts      = FXCollections.observableArrayList();
     private final ObservableList<AlertItem>        attackers      = FXCollections.observableArrayList();
@@ -137,40 +139,66 @@ public class MainController implements Initializable {
 
     @Override
     public void initialize(URL url, ResourceBundle rb) {
-        backend    = new BackendClient(BACKEND_URL);
+
+        backend = new BackendClient(BACKEND_URL);
         dataLoader = new DataLoader(backend);
 
         alertManager = new AlertTableManager(
-                alertTable, attackerTable,
-                tfFilterIp, tfFilterMac, tfFilterType,
-                cbFilterSeverity, cbFilterProtocol,
-                tfFilterAtkIp, allAlerts, attackers);
+                alertTable,
+                attackerTable,
+                tfFilterIp,
+                tfFilterMac,
+                tfFilterType,
+                cbFilterSeverity,
+                cbFilterProtocol,
+                tfFilterAtkIp,
+                allAlerts,
+                attackers
+        );
 
         alertManager.setup(
-                colTimestamp, colSeverity, colThreatType,
-                colSourceIp, colSourceMac, colDestIp,
-                colProtocol, colRequestType, colPackets, colDetails, colOccurrences,
-                colAtkIp, colAtkMac, colAtkCount);
+                colTimestamp,
+                colSeverity,
+                colThreatType,
+                colSourceIp,
+                colSourceMac,
+                colDestIp,
+                colProtocol,
+                colRequestType,
+                colPackets,
+                colDetails,
+                colOccurrences,
+                colAtkIp,
+                colAtkMac,
+                colAtkCount
+        );
 
         setupWhitelistTables();
         setupCasesTable();
 
         liveFeedList.setItems(liveEntries);
 
-        cbFilterSeverity.setItems(FXCollections.observableArrayList("", "CRITICAL", "HIGH", "MEDIUM", "LOW"));
-        cbFilterProtocol.setItems(FXCollections.observableArrayList("", "TCP", "UDP", "ICMP", "ARP"));
-        cbNewCaseSeverity.setItems(FXCollections.observableArrayList("CRITICAL", "HIGH", "MEDIUM", "LOW"));
+        cbFilterSeverity.setItems(FXCollections.observableArrayList(
+                "", "CRITICAL", "HIGH", "MEDIUM", "LOW"));
+
+        cbFilterProtocol.setItems(FXCollections.observableArrayList(
+                "", "TCP", "UDP", "ICMP", "ARP"));
+
+        cbNewCaseSeverity.setItems(FXCollections.observableArrayList(
+                "CRITICAL", "HIGH", "MEDIUM", "LOW"));
         cbNewCaseSeverity.setValue("HIGH");
 
-        tfFilterWlIp.textProperty().addListener((o, ov, nv)       -> applyWlFilter());
-        tfCaseFilterStatus.textProperty().addListener((o, ov, nv) -> applyCaseFilter());
-        tfCaseFilterIp.textProperty().addListener((o, ov, nv)     -> applyCaseFilter());
+        tfFilterWlIp.textProperty().addListener((obs, oldVal, newVal) -> applyWlFilter());
+        tfCaseFilterStatus.textProperty().addListener((obs, oldVal, newVal) -> applyCaseFilter());
+        tfCaseFilterIp.textProperty().addListener((obs, oldVal, newVal) -> applyCaseFilter());
 
         setStatus("Not connected", false);
+
+        // NEW: Replaces setupInvestigationPanel() and setupCaseDetailPanel()
         setupSidePanels();
+
         wireCaseTableDoubleClick();
     }
-
     // ── TABLE SETUP ───────────────────────────────────────────────────────────
 
     private void setupWhitelistTables() {
@@ -307,6 +335,9 @@ public class MainController implements Initializable {
     private void onLogin() {
         String user = tfUsername.getText().trim();
         String pass = pfPassword.getText();
+        investigationPanel.setBackend(backend);
+        caseDetailPanel.setBackend(backend);
+        alertGroupsPanel.setBackend(backend);   // NEW
         if (user.isEmpty() || pass.isEmpty()) {
             lblLoginStatus.setText("Username and password required");
             return;
@@ -783,20 +814,9 @@ public class MainController implements Initializable {
         });
     }
 
-    private void openInvestigation(String ip) {
-        if (!isReady() || ip == null || ip.isBlank()) return;
-        caseDetailPanel.setVisible(false);
-        caseDetailPanel.setManaged(false);
+    
 
-        investigationPanel.setVisible(true);
-        investigationPanel.setManaged(true);
-        investigationPanel.investigate(ip);
-    }
-
-    private void closeInvestigationPanel() {
-        investigationPanel.setVisible(false);
-        investigationPanel.setManaged(false);
-    }
+   
 
     // ── SHUTDOWN ──────────────────────────────────────────────────────────────
 
@@ -816,33 +836,32 @@ public class MainController implements Initializable {
  // no parent, so it never rendered. Fix: one StackPane holds both panels and
  // claims bp.right exactly once. Visibility toggling still gives you the same
  // "only one shows at a time" behaviour, but neither node is ever detached.
- private void setupSidePanels() {
-     investigationPanel = new IpInvestigationPanel(backend, this::closeInvestigationPanel);
-     investigationPanel.setVisible(false);
-     investigationPanel.setManaged(false);
+    private void setupSidePanels() {
+        investigationPanel = new IpInvestigationPanel(backend, this::closeInvestigationPanel);
+        investigationPanel.setVisible(false);
+        investigationPanel.setManaged(false);
 
-     caseDetailPanel = new CaseDetailPanel(backend, this::closeCaseDetailPanel);
-     caseDetailPanel.setVisible(false);
-     caseDetailPanel.setManaged(false);
-
-     StackPane sidePanelContainer = new StackPane(investigationPanel, caseDetailPanel);
-
-     Platform.runLater(() -> {
-         javafx.scene.layout.Pane root = findRootPane();
-         if (root instanceof HBox hbox) {
-             hbox.getChildren().add(sidePanelContainer);
-             HBox.setHgrow(sidePanelContainer, Priority.NEVER);
-         } else if (root instanceof BorderPane bp) {
-             bp.setRight(sidePanelContainer);
-         }
-     });
-
-     wireIpColumnClick();
- }
-
-    private void closeCaseDetailPanel() {
+        caseDetailPanel = new CaseDetailPanel(backend, this::closeCaseDetailPanel);
         caseDetailPanel.setVisible(false);
         caseDetailPanel.setManaged(false);
+
+        alertGroupsPanel = new AlertGroupsPanel(backend, this::closeAlertGroupsPanel, this::openCaseDetail);
+        alertGroupsPanel.setVisible(false);
+        alertGroupsPanel.setManaged(false);
+
+        sidePanelStack = new StackPane(investigationPanel, caseDetailPanel, alertGroupsPanel);
+
+        Platform.runLater(() -> {
+            javafx.scene.layout.Pane root = findRootPane();
+            if (root instanceof HBox hbox) {
+                hbox.getChildren().add(sidePanelStack);
+                HBox.setHgrow(sidePanelStack, Priority.NEVER);
+            } else if (root instanceof BorderPane bp) {
+                bp.setRight(sidePanelStack);
+            }
+        });
+
+        wireIpColumnClick();
     }
     private void wireCaseTableDoubleClick() {
 
@@ -864,19 +883,47 @@ public class MainController implements Initializable {
         });
         
     }
+    /** Shows exactly one side panel and hides the other two. */
+    private void showOnlySidePanel(javafx.scene.Node toShow) {
+        for (javafx.scene.Node n : sidePanelStack.getChildren()) {
+            boolean show = (n == toShow);
+            n.setVisible(show);
+            n.setManaged(show);
+        }
+    }
+
+    private void openInvestigation(String ip) {
+        if (!isReady() || ip == null || ip.isBlank()) return;
+        showOnlySidePanel(investigationPanel);
+        investigationPanel.investigate(ip);
+    }
+
     private void openCaseDetail(long caseId, String caseNumber) {
+        if (!isReady()) return;
+        caseDetailPanel.setBackend(backend);
+        showOnlySidePanel(caseDetailPanel);
+        caseDetailPanel.openCase(caseId, caseNumber);
+    }
 
-        if (!isReady())
-            return;
+    private void openAlertGroups() {
+        if (!isReady()) return;
+        alertGroupsPanel.setBackend(backend);
+        showOnlySidePanel(alertGroupsPanel);
+        alertGroupsPanel.open();
+    }
 
+    private void closeInvestigationPanel() {
         investigationPanel.setVisible(false);
         investigationPanel.setManaged(false);
+    }
 
-        caseDetailPanel.setBackend(backend);
+    private void closeCaseDetailPanel() {
+        caseDetailPanel.setVisible(false);
+        caseDetailPanel.setManaged(false);
+    }
 
-        caseDetailPanel.setVisible(true);
-        caseDetailPanel.setManaged(true);
-
-        caseDetailPanel.openCase(caseId, caseNumber);
+    private void closeAlertGroupsPanel() {
+        alertGroupsPanel.setVisible(false);
+        alertGroupsPanel.setManaged(false);
     }
 }

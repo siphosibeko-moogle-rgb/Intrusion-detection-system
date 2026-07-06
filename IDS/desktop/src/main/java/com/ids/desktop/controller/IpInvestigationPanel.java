@@ -60,11 +60,11 @@ public class IpInvestigationPanel extends VBox {
 	private final Label lblDetailPackets = info("—");
 	private final Label lblDetailTs = info("—");
 	private final Label lblDetailWindow = info("—");
+	private final Label lblDetailSrc = info("—");
 	private final TextArea txtDetailReason = new TextArea("Select a threat to see why it triggered.");
 	private final VBox packetEvidenceBox = new VBox(6);
 
-	// Timeline
-	private final VBox timelineBox = new VBox(8);
+	private JsonNode currentThreatNode;
 
 	// ── Status
 	private final Label lblStatus = new Label("Click a source IP to investigate.");
@@ -95,10 +95,7 @@ public class IpInvestigationPanel extends VBox {
 				return backend.getIpProfile(ip);
 			}
 		};
-		profileTask.setOnSucceeded(e -> {
-			populateProfile(profileTask.getValue());
-			loadTimeline(ip);
-		});
+		profileTask.setOnSucceeded(e -> populateProfile(profileTask.getValue()));
 		profileTask.setOnFailed(e -> Platform
 				.runLater(() -> setStatus("Failed to load profile: " + profileTask.getException().getMessage())));
 
@@ -156,7 +153,7 @@ public class IpInvestigationPanel extends VBox {
 		setMinWidth(380);
 
 		getChildren().addAll(buildHeader(onClose), buildOverviewSection(), buildThreatHistorySection(),
-				buildThreatDetailSection(), buildTimelineSection(), lblStatus);
+				buildThreatDetailSection(), lblStatus);
 
 		lblStatus.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
 		lblStatus.setPadding(new Insets(6, 12, 6, 12));
@@ -211,48 +208,44 @@ public class IpInvestigationPanel extends VBox {
 	private VBox buildThreatHistorySection() {
 		groupedHistoryBox.setStyle("-fx-background-color: #0d1117;");
 
-		Button btnViewAll = new Button("\u23F1  View Full History");
-		btnViewAll.setStyle("-fx-background-color: #21262d; -fx-text-fill: #00d4ff;"
-				+ "-fx-cursor: hand; -fx-font-size: 11px; -fx-padding: 3 8 3 8;"
-				+ "-fx-background-radius: 4; -fx-border-color: #30363d; -fx-border-radius: 4;");
-		btnViewAll.setOnAction(e -> openFullHistoryWindow());
-
-		HBox topBar = new HBox(btnViewAll);
-		topBar.setAlignment(Pos.CENTER_RIGHT);
-		topBar.setPadding(new Insets(0, 0, 6, 0));
-
 		ScrollPane scroll = new ScrollPane(groupedHistoryBox);
 		scroll.setFitToWidth(true);
 		scroll.setPrefHeight(210);
 		scroll.setStyle("-fx-background: #0d1117; -fx-background-color: #0d1117;");
 
-		return section("Threat History", new VBox(4, topBar, scroll));
+		return section("Threat History", scroll);
 	}
 
 	private VBox buildThreatDetailSection() {
-		txtDetailReason.setWrapText(true);
-		txtDetailReason.setPrefHeight(80);
-		txtDetailReason.setEditable(false);
-		txtDetailReason.setStyle("-fx-control-inner-background: #161b22; -fx-text-fill: #c9d1d9;"
-				+ "-fx-border-color: #30363d; -fx-font-size: 11px;");
+		Button btnPacketDetails = actionBtn("📦 Packet Details", "#1f6feb", e -> openPacketDetailsWindow());
+		Button btnConversation  = actionBtn("💬 View Conversation", "#7c3aed", e -> openConversationWindow());
+		Button btnFullHistory   = actionBtn("🕐 View Full History", "#374151", e -> openFullHistoryWindow());
 
-		// Packet evidence — collapsible
-		TitledPane packetPane = new TitledPane("Packet Evidence", buildPacketEvidenceScroll());
-		packetPane.setExpanded(false);
-		packetPane.setStyle("-fx-text-fill: #8b949e; -fx-background-color: #0d1117;");
+		HBox actionRow = new HBox(8, btnPacketDetails, btnConversation, btnFullHistory);
+		actionRow.setAlignment(Pos.CENTER_LEFT);
+		actionRow.setPadding(new Insets(10, 0, 0, 0));
 
 		VBox content = new VBox(6,
-				twoColGrid("Threat Type", lblDetailType, "Severity", lblDetailSeverity, "Destination", lblDetailDest,
-						"Protocol", lblDetailProto, "Packets", lblDetailPackets, "Window", lblDetailWindow, "Timestamp",
-						lblDetailTs),
+				twoColGrid("Threat Type", lblDetailType, "Severity", lblDetailSeverity,
+						"Source IP", lblDetailSrc, "Destination", lblDetailDest,
+						"Protocol", lblDetailProto, "Packets", lblDetailPackets,
+						"Window", lblDetailWindow, "Timestamp", lblDetailTs),
 				new Label("Detection Reason:") {
 					{
 						setStyle("-fx-text-fill: #8b949e; -fx-font-size: 11px;");
 					}
-				}, txtDetailReason, packetPane);
+				}, txtDetailReason, actionRow);
 		content.setSpacing(6);
 
 		return section("Threat Details", content);
+	}
+
+	private Button actionBtn(String label, String color, javafx.event.EventHandler<javafx.event.ActionEvent> handler) {
+		Button b = new Button(label);
+		b.setStyle("-fx-background-color: " + color + "; -fx-text-fill: white; -fx-font-size: 11px; "
+				+ "-fx-cursor: hand; -fx-padding: 5 10; -fx-background-radius: 4;");
+		b.setOnAction(handler);
+		return b;
 	}
 
 	private ScrollPane buildPacketEvidenceScroll() {
@@ -263,16 +256,6 @@ public class IpInvestigationPanel extends VBox {
 		sp.setPrefHeight(200);
 		sp.setStyle("-fx-background: #0d1117; -fx-background-color: #0d1117;");
 		return sp;
-	}
-
-	private VBox buildTimelineSection() {
-		timelineBox.setStyle("-fx-background-color: #0d1117;");
-		timelineBox.setPadding(new Insets(8, 4, 8, 4));
-		ScrollPane sp = new ScrollPane(timelineBox);
-		sp.setFitToWidth(true);
-		sp.setPrefHeight(220);
-		sp.setStyle("-fx-background: #0d1117; -fx-background-color: #0d1117;");
-		return section("Attack Timeline", sp);
 	}
 
 	// POPULATION
@@ -315,11 +298,12 @@ public class IpInvestigationPanel extends VBox {
             JsonNode threats = p.path("recentThreats");
             threats.forEach(allThreatNodes::add);
             populateGroupedHistory(threats);
-            setStatus("Loaded profile for " + ip + " \u2014 " + allThreatNodes.size() + " events");
+            setStatus("Loaded profile for " + ip + " — " + allThreatNodes.size() + " events");
         });
     }
 
 	private void populateThreatDetail(JsonNode t) {
+		currentThreatNode = t;
 		lblDetailType.setText(t.path("threatType").asText("—"));
 		lblDetailDest.setText(t.path("destIp").asText("—"));
 		lblDetailProto.setText(t.path("protocol").asText("—"));
@@ -337,27 +321,22 @@ public class IpInvestigationPanel extends VBox {
 		// Build Wireshark-style packet evidence from available fields
 		buildPacketEvidence(t);
 	}
+	private VBox buildPacketEvidence(JsonNode alert) {
+		VBox box = new VBox(6);
 
-	private void buildPacketEvidence(JsonNode alert) {
-		packetEvidenceBox.getChildren().clear();
-
-		// Ethernet Layer
 		TitledPane ethPane = evidenceLayer("Ethernet Layer", "Source MAC", alert.path("sourceMac").asText("—"),
 				"Destination MAC", alert.path("destMac").asText("—"), "Protocol", alert.path("protocol").asText("—"));
 
-		// IP Layer
 		TitledPane ipPane = evidenceLayer("IP Layer", "Source IP", alert.path("sourceIp").asText("—"), "Destination IP",
 				alert.path("destIp").asText("—"), "Protocol", alert.path("protocol").asText("—"), "Packet Count",
 				String.valueOf(alert.path("packetCount").asInt(0)));
 
-		// Application layer — parsed from requestType and details
 		String requestType = alert.path("requestType").asText("");
 		String details = alert.path("details").asText("");
 		String threatType = alert.path("threatType").asText("");
 
 		TitledPane appPane = buildAppLayerPane(threatType, requestType, details);
 
-		// Detection context
 		TitledPane detectionPane = evidenceLayer("IDS Detection Context", "Detector", threatType, "Window (ms)",
 				String.valueOf(alert.path("windowMs").asLong(0)), "Severity", alert.path("severity").asText("—"),
 				"Detection Reason", details.length() > 80 ? details.substring(0, 80) + "…" : details);
@@ -367,8 +346,10 @@ public class IpInvestigationPanel extends VBox {
 		appPane.setExpanded(true);
 		detectionPane.setExpanded(false);
 
-		packetEvidenceBox.getChildren().addAll(ethPane, ipPane, appPane, detectionPane);
+		box.getChildren().addAll(ethPane, ipPane, appPane, detectionPane);
+		return box;
 	}
+	
 
 	private TitledPane buildAppLayerPane(String threatType, String requestType, String details) {
 		String layerName;
@@ -396,64 +377,6 @@ public class IpInvestigationPanel extends VBox {
 
 		String[][] f = fields;
 		return evidenceLayer(layerName, flattenFields(f));
-	}
-
-	// TIMELINE
-	private void loadTimeline(String ip) {
-		Task<JsonNode> task = new Task<>() {
-			@Override
-			protected JsonNode call() throws Exception {
-				return backend.getTimeline(ip);
-			}
-		};
-		task.setOnSucceeded(e -> buildTimeline(task.getValue()));
-		task.setOnFailed(
-				e -> Platform.runLater(() -> timelineBox.getChildren().setAll(new Label("Timeline unavailable."))));
-
-		Thread t = new Thread(task, "ids-timeline");
-		t.setDaemon(true);
-		t.start();
-	}
-
-	private void buildTimeline(JsonNode alertArray) {
-		List<AttackTimelineBuilder.TimelineEvent> events = AttackTimelineBuilder.build(alertArray);
-
-		Platform.runLater(() -> {
-			timelineBox.getChildren().clear();
-			if (events.isEmpty()) {
-				timelineBox.getChildren().add(styledLabel("No timeline data available.", "#6b7280", 11));
-				return;
-			}
-
-			for (AttackTimelineBuilder.TimelineEvent ev : events) {
-				timelineBox.getChildren().add(buildTimelineCard(ev));
-			}
-		});
-	}
-
-	private VBox buildTimelineCard(AttackTimelineBuilder.TimelineEvent ev) {
-		// Time + phase label
-		HBox header = new HBox(8);
-		header.setAlignment(Pos.CENTER_LEFT);
-
-		Label lblTime = styledLabel(ev.time(), "#6b7280", 11);
-		Label lblPhase = new Label(ev.phase().label);
-		applyRiskStyle(lblPhase, ev.severity());
-		lblPhase.setStyle(
-				lblPhase.getStyle() + "-fx-font-size: 11px; -fx-padding: 1 6 1 6;" + "-fx-background-radius: 3;");
-
-		Label lblCount = styledLabel("× " + ev.alertCount(), "#6b7280", 10);
-		header.getChildren().addAll(lblTime, lblPhase, lblCount);
-
-		Label lblTitle = bold(ev.title(), 12);
-		Label lblDesc = new Label(ev.description());
-		lblDesc.setWrapText(true);
-		lblDesc.setStyle("-fx-text-fill: #8b949e; -fx-font-size: 11px;");
-
-		VBox card = new VBox(3, header, lblTitle, lblDesc);
-		card.setStyle("-fx-background-color: #161b22; -fx-border-color: #30363d;"
-				+ "-fx-border-radius: 6; -fx-background-radius: 6; -fx-padding: 8;");
-		return card;
 	}
 
 	// HELPERS
@@ -590,7 +513,6 @@ public class IpInvestigationPanel extends VBox {
 			lblDetailWindow.setText("—");
 			txtDetailReason.setText("Select a threat to see why it triggered.");
 			packetEvidenceBox.getChildren().clear();
-			timelineBox.getChildren().clear();
 		});
 	}
 
@@ -891,6 +813,107 @@ public class IpInvestigationPanel extends VBox {
 		Label l = new Label(text);
 		l.setStyle("-fx-text-fill: #8b949e; -fx-font-size: 12px;");
 		return l;
+	}
+	private void openPacketDetailsWindow() {
+		if (currentThreatNode == null) {
+			setStatus("Select a threat from the history above first.");
+			return;
+		}
+
+		Stage stage = new Stage();
+		stage.setTitle("Packet Details — " + currentThreatNode.path("threatType").asText("Alert"));
+		stage.setMinWidth(560);
+		stage.setMinHeight(480);
+
+		Label note = new Label("Reconstructed from the alert record captured by the detection engine — "
+				+ "not a raw packet capture. Full PCAP export is a planned future feature.");
+		note.setWrapText(true);
+		note.setStyle("-fx-text-fill: #8b949e; -fx-font-size: 11px; -fx-padding: 0 0 10 0;");
+
+		VBox root = new VBox(10, note, buildPacketEvidence(currentThreatNode));
+		root.setPadding(new Insets(14));
+		root.setStyle("-fx-background-color: #0d1117;");
+
+		ScrollPane scroll = new ScrollPane(root);
+		scroll.setFitToWidth(true);
+		scroll.setStyle("-fx-background: #0d1117; -fx-background-color: #0d1117;");
+
+		Scene scene = new Scene(scroll, 600, 500);
+		scene.setFill(Color.web("#0d1117"));
+		stage.setScene(scene);
+		stage.show();
+	}
+
+	private void openConversationWindow() {
+		if (currentThreatNode == null || currentIp == null) {
+			setStatus("Select a threat from the history above first.");
+			return;
+		}
+		String destIp = currentThreatNode.path("destIp").asText("");
+		if (destIp.isBlank()) {
+			setStatus("This threat has no destination IP recorded.");
+			return;
+		}
+
+		Stage stage = new Stage();
+		stage.setTitle("Conversation — " + currentIp + " ↔ " + destIp);
+		stage.setMinWidth(680);
+		stage.setMinHeight(480);
+
+		VBox root = new VBox(styledLabel("Loading conversation…", "#8b949e", 12));
+		root.setStyle("-fx-background-color: #0d1117;");
+		root.setPadding(new Insets(14));
+
+		Scene scene = new Scene(root, 700, 520);
+		scene.setFill(Color.web("#0d1117"));
+		stage.setScene(scene);
+		stage.show();
+
+		final String srcIp = currentIp;
+		Task<List<com.ids.desktop.model.AlertItem>> task = new Task<>() {
+			@Override
+			protected List<com.ids.desktop.model.AlertItem> call() throws Exception {
+				return backend.fetchConversation(srcIp, destIp);
+			}
+		};
+		task.setOnSucceeded(e -> Platform.runLater(() -> populateConversationWindow(root, task.getValue(), srcIp, destIp)));
+		task.setOnFailed(e -> Platform.runLater(
+				() -> root.getChildren().setAll(new Label("Failed to load conversation: " + task.getException().getMessage()))));
+
+		Thread t = new Thread(task, "ids-conversation");
+		t.setDaemon(true);
+		t.start();
+	}
+
+	private void populateConversationWindow(VBox root, List<com.ids.desktop.model.AlertItem> items, String ip1, String ip2) {
+		root.getChildren().clear();
+
+		Label header = styledLabel(
+				items.size() + " alert" + (items.size() == 1 ? "" : "s") + " exchanged between " + ip1 + " and " + ip2,
+				"#c9d1d9", 12);
+		header.setStyle(header.getStyle() + " -fx-font-weight: bold; -fx-padding: 0 0 8 0;");
+
+		ListView<com.ids.desktop.model.AlertItem> list = new ListView<>(FXCollections.observableArrayList(items));
+		list.setStyle("-fx-background-color: #0d1117; -fx-border-color: #30363d;");
+		list.setPlaceholder(new Label("No alerts recorded between these two IPs."));
+		list.setCellFactory(lv -> new ListCell<>() {
+			@Override
+			protected void updateItem(com.ids.desktop.model.AlertItem item, boolean empty) {
+				super.updateItem(item, empty);
+				if (empty || item == null) {
+					setText(null);
+					setStyle("");
+					return;
+				}
+				setText(String.format("[%s]  %-9s  %-20s  %s \u2192 %s", item.getTimestamp(), item.getSeverity(),
+						item.getThreatType(), item.getSourceIp(), item.getDestIp()));
+				setStyle("-fx-text-fill: #c9d1d9; -fx-font-size: 11px; -fx-background-color: #0d1117; "
+						+ "-fx-font-family: monospace;");
+			}
+		});
+		VBox.setVgrow(list, Priority.ALWAYS);
+
+		root.getChildren().addAll(header, list);
 	}
 
 }

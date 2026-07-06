@@ -39,6 +39,21 @@ public class NetworkWhitelist {
     private String       gateway        = "192.168.8.1";
     private List<String> dockerSubnets  = new ArrayList<>();
 
+    // FIX: these three sets used to back three methods that were left as
+    // auto-generated stubs returning false unconditionally — isKnownServer(),
+    // isTrustedScanner(), isTrustedBeaconDestination(). That compiled fine but
+    // silently defeated every detector fix that depended on them:
+    //   - NmapScanDetector / HttpAnomalyDetector kept alerting on your own
+    //     vulnerability scanner (isTrustedScanner always false)
+    //   - DataExfiltrationDetector's "(dynamic/DHCP device)" label was always
+    //     appended, even for known static servers (isKnownServer always false)
+    //   - BeaconingDetector's self-exclusion never excluded anything
+    //     (isTrustedBeaconDestination always false)
+    // All three are now real Sets, populated from properties below.
+    private final Set<String> internalServers            = new HashSet<>();
+    private final Set<String> trustedScanners             = new HashSet<>();
+    private final Set<String> beaconTrustedDestinations   = new HashSet<>();
+
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .build();
@@ -98,11 +113,57 @@ public class NetworkWhitelist {
                 }
             }
 
+            // FIX: actually parse server.N properties. This class's own
+            // job is to be the single source of truth for "is this a known
+            // internal server" — getInternalServers()/isKnownServer() were
+            // both dead until now regardless of what was configured here.
+            //   server.1=10.0.0.10
+            //   server.2=10.0.0.11
+            for (String name : p.stringPropertyNames()) {
+                if (name.matches("server\\.\\d+")) {
+                    String ip = p.getProperty(name, "").trim();
+                    if (!ip.isEmpty()) internalServers.add(ip);
+                }
+            }
+
+            // FIX: authorized internal security tools (Nessus/OpenVAS/scheduled
+            // nmap compliance scans) behave identically to the attacks
+            // NmapScanDetector and HttpAnomalyDetector are built to catch —
+            // port sweeps and scanner User-Agents are the SAME signal whether
+            // it's an attacker or your own vulnerability-management program.
+            //   network.trusted.scanners=10.0.0.50,10.0.0.51
+            String trustedScannersProp = p.getProperty("network.trusted.scanners", "");
+            if (!trustedScannersProp.isBlank()) {
+                for (String s : trustedScannersProp.split(",")) {
+                    String trimmed = s.trim();
+                    if (!trimmed.isEmpty()) trustedScanners.add(trimmed);
+                }
+            }
+
+            // FIX: known-legitimate periodic destinations (this engine's own
+            // backend, monitoring/license servers) exempted from
+            // BeaconingDetector, which otherwise can't distinguish a fixed-
+            // interval malware beacon from a fixed-interval monitoring agent.
+            //   network.beacon.trusted.destinations=10.0.0.5,203.0.113.9
+            String beaconProp = p.getProperty("network.beacon.trusted.destinations", "");
+            if (!beaconProp.isBlank()) {
+                for (String s : beaconProp.split(",")) {
+                    String trimmed = s.trim();
+                    if (!trimmed.isEmpty()) beaconTrustedDestinations.add(trimmed);
+                }
+            }
+
             System.out.println("[Whitelist] Properties loaded — work hours: "
                 + workStart + ":00–" + workEnd + ":00 (" + timezone + ")");
             System.out.println("[Whitelist] Subnet: " + subnet + "  Gateway: " + gateway);
             if (!dockerSubnets.isEmpty())
                 System.out.println("[Whitelist] Docker subnets: " + dockerSubnets);
+            if (!internalServers.isEmpty())
+                System.out.println("[Whitelist] Known internal servers: " + internalServers);
+            if (!trustedScanners.isEmpty())
+                System.out.println("[Whitelist] Trusted scanners: " + trustedScanners);
+            if (!beaconTrustedDestinations.isEmpty())
+                System.out.println("[Whitelist] Trusted beacon destinations: " + beaconTrustedDestinations);
 
         } catch (Exception e) {
             System.err.println("[Whitelist] Could not load properties: " + e.getMessage());
@@ -219,12 +280,12 @@ public class NetworkWhitelist {
     public void addTrustedMac(String mac) {
         if (mac != null && !mac.isBlank()) trustedMacs.add(mac.toLowerCase().trim());
     }
-
     private boolean isSystemAddress(String n) {
         return n.startsWith("127.") || n.equals("::1")
             || n.startsWith("224.") || n.startsWith("239.")
-            || n.equals("255.255.255.255");
+            || n.equals("255.255.255.255") || n.startsWith("169.254.");
     }
+    
 
     private String normalize(String ip) {
         return ip.trim()
@@ -250,7 +311,12 @@ public class NetworkWhitelist {
 
     public String  getGateway()        { return gateway; }
     public String  getSubnet()         { return subnet; }
-    public List<String> getInternalServers() { return new ArrayList<>(); }
+
+    // FIX: was hardcoded `return new ArrayList<>();` — always empty regardless
+    // of configuration. Now backed by the real internalServers set, populated
+    // from server.N properties in loadProperties().
+    public List<String> getInternalServers() { return new ArrayList<>(internalServers); }
+
     public int     getWorkStartHour()  { return workStart; }
     public int     getWorkEndHour()    { return workEnd; }
     public String  getWorkTimezone()   { return timezone; }
@@ -258,4 +324,45 @@ public class NetworkWhitelist {
     public int     getWorkStart()      { return workStart; }
     public int     getWorkEnd()        { return workEnd; }
     public void    addTrusted(String ip, Object ignored) { addTrustedIp(ip); }
+
+    /**
+     * True if this destination is a known-legitimate source of regular,
+     * fixed-interval traffic (this engine's own backend, a monitoring or
+     * license server) and should be exempt from BeaconingDetector.
+     *
+     * FIX: was a stub returning false unconditionally — every destination
+     * used to be a beaconing candidate, including this engine's own
+     * scheduled whitelist-refresh traffic to its backend.
+     */
+    public boolean isTrustedBeaconDestination(String dstIP) {
+        return dstIP != null && beaconTrustedDestinations.contains(normalize(dstIP));
+    }
+
+    /**
+     * Backed by the same server.N properties as getInternalServers().
+     *
+     * FIX: was a stub returning false unconditionally — DataExfiltrationDetector
+     * always labeled the destination "(dynamic/DHCP device)" even when it was
+     * actually another known static server, because this always said no.
+     */
+    public boolean isKnownServer(String srcIP) {
+        return srcIP != null && internalServers.contains(normalize(srcIP));
+    }
+
+    /**
+     * True if this IP is a known, authorized internal security tool
+     * (vulnerability scanner, compliance scan runner). Intentionally
+     * separate from isTrusted() — a scanner should be exempt from
+     * scan/sweep detection specifically, without being exempt from every
+     * other detector (e.g. it should still trip AfterHoursDetector if
+     * someone runs it at 3am without authorization).
+     *
+     * FIX: was a stub returning false unconditionally — NmapScanDetector's
+     * and HttpAnomalyDetector's trusted-scanner checks always failed, so
+     * your own vulnerability scanner kept firing CRITICAL port-sweep and
+     * scanner-User-Agent alerts against itself.
+     */
+    public boolean isTrustedScanner(String srcIP) {
+        return srcIP != null && trustedScanners.contains(normalize(srcIP));
+    }
 }

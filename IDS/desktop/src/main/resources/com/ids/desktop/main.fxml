@@ -287,50 +287,71 @@
                 <!-- END Whitelist Tab -->
 
                 <!-- CASES -->
-                <Tab text="Cases">
-                    <VBox spacing="10" style="-fx-padding:10;">
-                        <HBox spacing="10">
-                            <TextField fx:id="tfCaseFilterStatus"
-                                       promptText="Status"/>
-                            <TextField fx:id="tfCaseFilterIp"
-                                       promptText="IP"/>
-                        </HBox>
-                        <TableView fx:id="casesTable" VBox.vgrow="ALWAYS">
-                            <columns>
-                                <TableColumn fx:id="colCaseNum"
-                                             text="Case #"/>
-                                <TableColumn fx:id="colCaseTitle"
-                                             text="Title"/>
-                                <TableColumn fx:id="colCaseStatus"
-                                             text="Status"/>
-                                <TableColumn fx:id="colCaseSeverity"
-                                             text="Severity"/>
-                                <TableColumn fx:id="colCaseSuspectIp"
-                                             text="IP"/>
-                                <TableColumn fx:id="colCaseSuspectMac"
-                                             text="MAC"/>
-                                <TableColumn fx:id="colCaseThreatType"
-                                             text="Threat"/>
-                                <TableColumn fx:id="colCaseAssignedTo"
-                                             text="Assigned"/>
-                                <TableColumn fx:id="colCaseOpenedAt"
-                                             text="Opened"/>
-                            </columns>
-                        </TableView>
-                        <HBox spacing="10">
-                            <TextField fx:id="tfNewCaseTitle"
-                                       promptText="Title"/>
-                            <TextField fx:id="tfNewCaseSuspectIp"
-                                       promptText="IP"/>
-                            <TextField fx:id="tfNewCaseSuspectMac"
-                                       promptText="MAC"/>
-                            <ComboBox  fx:id="cbNewCaseSeverity"/>
-                            <Button text="Create Case" onAction="#onCreateCase"/>
-                            <Button text="Close Case"  onAction="#onCloseCase"/>
-                        </HBox>
-                        <Label fx:id="lblCaseStatus"/>
-                    </VBox>
-                </Tab>
+<Tab text="Cases">
+    <VBox spacing="10" style="-fx-padding:10;">
+
+        <!-- Filters -->
+        <HBox spacing="10">
+
+            <TextField fx:id="tfCaseFilterStatus"
+                       promptText="Status"/>
+
+            <TextField fx:id="tfCaseFilterIp"
+                       promptText="IP"/>
+
+            <Pane HBox.hgrow="ALWAYS"/>
+
+            <Button text="🛡 Create Cases from Alerts"
+                    onAction="#onOpenAlertGroups"
+                    style="-fx-background-color:#1f6feb;
+                           -fx-text-fill:white;
+                           -fx-font-weight:bold;"/>
+
+        </HBox>
+
+        <!-- Cases Table -->
+        <TableView fx:id="casesTable" VBox.vgrow="ALWAYS">
+            <columns>
+                <TableColumn fx:id="colCaseNum"
+                             text="Case #"/>
+                <TableColumn fx:id="colCaseTitle"
+                             text="Title"/>
+                <TableColumn fx:id="colCaseStatus"
+                             text="Status"/>
+                <TableColumn fx:id="colCaseSeverity"
+                             text="Severity"/>
+                <TableColumn fx:id="colCaseSuspectIp"
+                             text="IP"/>
+                <TableColumn fx:id="colCaseSuspectMac"
+                             text="MAC"/>
+                <TableColumn fx:id="colCaseThreatType"
+                             text="Threat"/>
+                <TableColumn fx:id="colCaseAssignedTo"
+                             text="Assigned"/>
+                <TableColumn fx:id="colCaseOpenedAt"
+                             text="Opened"/>
+            </columns>
+        </TableView>
+
+        <!-- Manual Case Creation -->
+        <HBox spacing="10">
+            <TextField fx:id="tfNewCaseTitle"
+                       promptText="Title"/>
+            <TextField fx:id="tfNewCaseSuspectIp"
+                       promptText="IP"/>
+            <TextField fx:id="tfNewCaseSuspectMac"
+                       promptText="MAC"/>
+            <ComboBox fx:id="cbNewCaseSeverity"/>
+            <Button text="Create Case"
+                    onAction="#onCreateCase"/>
+            <Button text="Close Case"
+                    onAction="#onCloseCase"/>
+        </HBox>
+
+        <Label fx:id="lblCaseStatus"/>
+
+    </VBox>
+</Tab>
 
                 <!-- SETTINGS -->
                 <Tab text="Settings">

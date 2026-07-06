@@ -46,11 +46,9 @@ import java.util.Map;
  *
  * TAB STRUCTURE
  * -------------
- *  1. Overview   — metadata, stats, quick actions
- *  2. Alerts     — table of linked alerts, filterable
- *  3. Timeline   — chronological log of case events
- *  4. Notes      — analyst notes with add/delete
- *  5. Evidence   — placeholder (future: packets, attachments)
+ *  1. Overview  — metadata, stats, quick actions
+ *  2. Alerts    — table of linked alerts, filterable
+ *  3. Notes     — analyst notes with add/delete
  */
 public class CaseDetailPanel extends VBox {
 
@@ -84,9 +82,6 @@ public class CaseDetailPanel extends VBox {
     private TableView<AlertItem> alertsTable;
     private TextField tfAlertSearch;
     private ComboBox<String> cbAlertSeverity;
-
-    // ── Timeline tab widgets ────────────────────────────────
-    private VBox timelineContainer;
 
     // ── Notes tab widgets ───────────────────────────────────
     private VBox  notesContainer;
@@ -130,7 +125,6 @@ public class CaseDetailPanel extends VBox {
 
         // Reset state
         allLinkedAlerts.clear();
-        timelineContainer.getChildren().clear();
         notesContainer.getChildren().clear();
         taNoteInput.clear();
         lblNoteStatus.setText("");
@@ -159,13 +153,12 @@ public class CaseDetailPanel extends VBox {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         // Quick-action buttons in header
-        Button btnRefresh    = mkBtn("⟳ Refresh",   "#1f6feb", e -> loadDetail(activeCaseId));
-        Button btnBlockIp    = mkBtn("⛔ Block IP",  "#dc2626", e -> quickAction("block-ip",    "IP_BLOCKED"));
-        Button btnWhitelistIp = mkBtn("✔ Whitelist", "#16a34a", e -> quickAction("whitelist-ip","IP_WHITELISTED"));
-        Button btnClose      = mkBtn("✕ Close",     "#374151", e -> onClose.run());
+        Button btnRefresh    = mkBtn("⟳ Refresh", "#1f6feb", e -> loadDetail(activeCaseId));
+        Button btnBlockIp    = mkBtn("⛔ Block IP", "#dc2626", e -> quickAction("block-ip", "IP_BLOCKED"));
+        Button btnClose      = mkBtn("✕ Close", "#374151", e -> onClose.run());
 
         header.getChildren().addAll(title, dotLoading, spacer,
-                                     btnRefresh, btnBlockIp, btnWhitelistIp, btnClose);
+                                     btnRefresh, btnBlockIp, btnClose);
 
         // ── Status bar ────────────────────────────────────
         lblPanelStatus = new Label("Loading...");
@@ -179,9 +172,7 @@ public class CaseDetailPanel extends VBox {
         tabs.getTabs().addAll(
             buildOverviewTab(),
             buildAlertsTab(),
-            buildTimelineTab(),
-            buildNotesTab(),
-            buildEvidenceTab()
+            buildNotesTab()
         );
         VBox.setVgrow(tabs, Priority.ALWAYS);
 
@@ -222,8 +213,8 @@ public class CaseDetailPanel extends VBox {
             {"Alert Count",  null}
         };
         Label[] vals = { lblCaseNum, lblTitle, lblStatus, lblPriority, lblSeverity,
-                         lblSuspectIp, lblAssignedTo, lblCreatedBy, lblOpenedAt,
-                         lblClosedAt, lblFirstSeen, lblLastSeen, lblAlertCount };
+                          lblSuspectIp, lblAssignedTo, lblCreatedBy, lblOpenedAt,
+                          lblClosedAt, lblFirstSeen, lblLastSeen, lblAlertCount };
 
         for (int i = 0; i < rows.length; i++) {
             Label key = new Label(rows[i][0] + ":");
@@ -307,13 +298,13 @@ public class CaseDetailPanel extends VBox {
         alertsTable = new TableView<>();
         alertsTable.setStyle("-fx-background-color: #0d1117;");
 
-        TableColumn<AlertItem, String> colTime  = col("Time",        "timestamp",   120);
-        TableColumn<AlertItem, String> colSev   = col("Severity",    "severity",     80);
-        TableColumn<AlertItem, String> colType  = col("Type",        "threatType",  140);
-        TableColumn<AlertItem, String> colSrc   = col("Source IP",   "sourceIp",    120);
-        TableColumn<AlertItem, String> colDst   = col("Dest IP",     "destIp",      120);
-        TableColumn<AlertItem, String> colProto = col("Protocol",    "protocol",     70);
-        TableColumn<AlertItem, String> colDet   = col("Details",     "details",     220);
+        TableColumn<AlertItem, String> colTime  = col("Time",      "timestamp",   120);
+        TableColumn<AlertItem, String> colSev   = col("Severity",  "severity",     80);
+        TableColumn<AlertItem, String> colType  = col("Type",      "threatType",  140);
+        TableColumn<AlertItem, String> colSrc   = col("Source IP", "sourceIp",    120);
+        TableColumn<AlertItem, String> colDst   = col("Dest IP",   "destIp",      120);
+        TableColumn<AlertItem, String> colProto = col("Protocol",  "protocol",     70);
+        TableColumn<AlertItem, String> colDet   = col("Details",   "details",     220);
 
         colSev.setCellFactory(c -> severityCell());
 
@@ -346,73 +337,7 @@ public class CaseDetailPanel extends VBox {
         });
     }
 
-    // ─── Tab 3: Timeline ──────────────────────────────────
-
-    private Tab buildTimelineTab() {
-        timelineContainer = new VBox(4);
-        timelineContainer.setPadding(new Insets(12));
-        timelineContainer.setStyle("-fx-background-color: #0d1117;");
-
-        ScrollPane scroll = new ScrollPane(timelineContainer);
-        scroll.setFitToWidth(true);
-        scroll.setStyle("-fx-background-color: #0d1117; -fx-background: #0d1117;");
-
-        return new Tab("Timeline", scroll);
-    }
-
-    private void populateTimeline(JsonNode arr) {
-        timelineContainer.getChildren().clear();
-        if (arr == null || !arr.isArray()) {
-            timelineContainer.getChildren().add(new Label("No timeline events yet."));
-            return;
-        }
-        for (JsonNode entry : arr) {
-            HBox row = buildTimelineRow(
-                entry.path("occurredAt").asText(""),
-                entry.path("eventKind").asText(""),
-                entry.path("actor").asText("system"),
-                entry.path("detail").asText("")
-            );
-            timelineContainer.getChildren().add(row);
-        }
-    }
-
-    private HBox buildTimelineRow(String time, String kind, String actor, String detail) {
-        // Coloured dot by event kind
-        String dotColour = switch (kind) {
-            case "CASE_OPENED"    -> "#22c55e";
-            case "CASE_CLOSED"    -> "#6b7280";
-            case "ALERT_LINKED"   -> "#ef4444";
-            case "STATUS_CHANGED" -> "#f59e0b";
-            case "NOTE_ADDED"     -> "#3b82f6";
-            case "IP_BLOCKED"     -> "#dc2626";
-            case "IP_WHITELISTED" -> "#16a34a";
-            default               -> "#8b949e";
-        };
-        Circle dot = new Circle(5, Color.web(dotColour));
-
-        Label lblTime   = new Label(fmtInstant(time));
-        lblTime.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11; -fx-min-width: 145;");
-
-        Label lblKind   = new Label(kind.replace("_", " "));
-        lblKind.setStyle("-fx-text-fill: #c9d1d9; -fx-font-size: 11; -fx-font-weight: bold; -fx-min-width: 140;");
-
-        Label lblActor  = new Label(actor);
-        lblActor.setStyle("-fx-text-fill: #58a6ff; -fx-font-size: 11; -fx-min-width: 90;");
-
-        Label lblDetail = new Label(detail);
-        lblDetail.setStyle("-fx-text-fill: #8b949e; -fx-font-size: 11;");
-        lblDetail.setWrapText(true);
-        HBox.setHgrow(lblDetail, Priority.ALWAYS);
-
-        HBox row = new HBox(10, dot, lblTime, lblKind, lblActor, lblDetail);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(6, 8, 6, 8));
-        row.setStyle("-fx-border-color: #21262d; -fx-border-width: 0 0 1 0;");
-        return row;
-    }
-
-    // ─── Tab 4: Notes ─────────────────────────────────────
+    // ─── Tab 3: Notes ─────────────────────────────────────
 
     private Tab buildNotesTab() {
         // Notes list
@@ -470,7 +395,7 @@ public class CaseDetailPanel extends VBox {
         String content = note.path("content").asText("");
         String created = fmtInstant(note.path("createdAt").asText(""));
 
-        Label lblMeta = new Label(author + "  ·  " + created);
+        Label lblMeta = new Label(author + " · " + created);
         lblMeta.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11;");
 
         Label lblContent = new Label(content);
@@ -493,30 +418,6 @@ public class CaseDetailPanel extends VBox {
         return card;
     }
 
-    // ─── Tab 5: Evidence ──────────────────────────────────
-
-    private Tab buildEvidenceTab() {
-        VBox root = new VBox(12);
-        root.setPadding(new Insets(20));
-        root.setStyle("-fx-background-color: #0d1117;");
-
-        Label title = new Label("Evidence & Attachments");
-        title.setStyle("-fx-text-fill: #c9d1d9; -fx-font-size: 14; -fx-font-weight: bold;");
-
-        Label info = new Label(
-            "Future capabilities:\n" +
-            "  • Captured packet files (PCAP export)\n" +
-            "  • Screenshots and screen recordings\n" +
-            "  • Attached investigation reports\n" +
-            "  • Exported alert CSV exports\n\n" +
-            "This tab will be enabled in the next release.");
-        info.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 12;");
-        info.setWrapText(true);
-
-        root.getChildren().addAll(title, info);
-        return new Tab("🗂 Evidence", root);
-    }
-
     // ──────────────────────────────────────────────────────────────────────
     // DATA LOADING
     // ─────────────────────────────────────────────────────────────────────
@@ -530,10 +431,9 @@ public class CaseDetailPanel extends VBox {
                 Platform.runLater(() -> {
                     populateOverview(root);
                     populateAlertsFromDetail(root.path("linkedAlerts"));
-                    populateTimeline(root.path("timeline"));
                     populateNotes(root.path("notes"));
                     setLoading(false);
-                    lblPanelStatus.setText("Case " + activeCaseNumber + " loaded  ·  " +
+                    lblPanelStatus.setText("Case " + activeCaseNumber + " loaded · " +
                         root.path("alertCount").asInt(0) + " linked alerts");
                 });
             } catch (Exception ex) {
@@ -607,7 +507,7 @@ public class CaseDetailPanel extends VBox {
         pool.submit(() -> {
             try {
                 backend.postJson("/api/forensics/cases/" + activeCaseId + "/notes",
-                                 "{\"content\": " + MAPPER.writeValueAsString(content) + "}");
+                                  "{\"content\": " + MAPPER.writeValueAsString(content) + "}");
                 Platform.runLater(() -> {
                     taNoteInput.clear();
                     lblNoteStatus.setText("Note saved ✓");
@@ -670,7 +570,7 @@ public class CaseDetailPanel extends VBox {
         });
     }
 
-    // ─────────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────
     // HELPERS
     // ──────────────────────────────────────────────────────────────────────
 

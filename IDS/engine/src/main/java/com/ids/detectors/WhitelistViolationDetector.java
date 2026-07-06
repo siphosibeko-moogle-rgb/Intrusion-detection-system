@@ -56,13 +56,12 @@ public class WhitelistViolationDetector implements Detector {
         long    now         = System.currentTimeMillis();
         boolean warmedUp    = (now - startTime) > WARMUP_MS;
 
-        // During warm-up: silently register the device, don't alert
+        
         if (!warmedUp) {
-            // The whitelist/device registry should learn from traffic here.
-            // If NetworkWhitelist has a learn() method, call it.
-            // whitelist.learn(srcIP, srcMac);
+            System.out.printf("[Whitelist] (warmup, not alerting) seen: %s [%s]%n", srcIP, srcMac);
             return;
         }
+       
 
         // ── UNKNOWN IP ──────────────────────────────────────────────────
         // Only alert on internal IPs we don't recognise.
@@ -166,7 +165,8 @@ public class WhitelistViolationDetector implements Detector {
             || ip.startsWith("224.")
             || ip.startsWith("239.")
             || ip.equals("255.255.255.255")
-            || ip.equals("0.0.0.0");
+            || ip.equals("0.0.0.0")
+            || ip.startsWith("169.254.");
     }
 
     private boolean shouldAlert(String key, long now) {

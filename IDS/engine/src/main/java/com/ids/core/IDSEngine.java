@@ -107,24 +107,23 @@ public class IDSEngine {
         String subnet = whitelist.getSubnet();
 
         icmpDetector            = new IcmpAbuseDetector(alertManager);
-        nmapDetector            = new NmapScanDetector(alertManager);
+        nmapDetector            = new NmapScanDetector(alertManager, whitelist);
         whitelistDetector       = new WhitelistViolationDetector(alertManager, whitelist, subnet);
         arpDetector             = new ArpSpoofingDetector(alertManager, whitelist.getGateway());
         dnsDetector             = new DnsTunnelingDetector(alertManager);
-        exfilDetector           = new DataExfiltrationDetector(alertManager, subnet,
-                                          whitelist.getInternalServers());
-        afterHoursDetector      = new AfterHoursDetector(alertManager, subnet,
+        exfilDetector           = new DataExfiltrationDetector(alertManager, whitelist);
+        afterHoursDetector      = new AfterHoursDetector(alertManager, whitelist,
                                           whitelist.getWorkStartHour(), whitelist.getWorkEndHour(),
                                           whitelist.getWorkTimezone(), whitelist.isWeekendAlert());
-        bruteForceDetector      = new BruteForceDetector(alertManager, subnet);
-        beaconingDetector       = new BeaconingDetector(alertManager);
+        bruteForceDetector      = new BruteForceDetector(alertManager);
+        beaconingDetector       = new BeaconingDetector(alertManager, whitelist);
         lateralMovementDetector = new LateralMovementDetector(alertManager, subnet);
-        httpAnomalyDetector     = new HttpAnomalyDetector(alertManager);
+        httpAnomalyDetector     = new HttpAnomalyDetector(alertManager, whitelist);
         rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist.getGateway());
         fileTransferDetector    = new FileTransferDetector(alertManager, subnet,
                                           whitelist.getInternalServers());
         dataStagingDetector     = new DataStagingDetector(alertManager, subnet);
-        ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, subnet);
+        ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, whitelist);
         lowSlowDetector         = new LowAndSlowScanDetector(alertManager);
         portKnockingDetector    = new PortKnockingDetector(alertManager);
         sqlInjectionDetector    = new SqlInjectionDetector(alertManager);

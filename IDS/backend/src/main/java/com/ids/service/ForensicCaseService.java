@@ -1,11 +1,13 @@
 package com.ids.service;
 
+import com.ids.dto.AlertGroupDTO;
 import com.ids.dto.CaseDetailDTO;
 import com.ids.entity.CaseNote;
 import com.ids.entity.CaseTimelineEntry;
 import com.ids.model.Alert;
 import com.ids.model.ForensicCase;
 import com.ids.model.PacketLog;
+import com.ids.repository.AlertGroupProjection;
 import com.ids.repository.AlertRepository;
 import com.ids.repository.CaseNoteRepository;
 import com.ids.repository.CaseTimelineRepository;
@@ -15,8 +17,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Central service for Case Management.
@@ -348,5 +352,91 @@ public class ForensicCaseService {
         int  year = java.time.LocalDate.now().getYear();
         long seq  = caseRepo.count() + 1;
         return String.format("CASE-%d-%03d", year, seq);
+    }
+    public List<AlertGroupDTO> getAlertGroupsForCaseCreation() {
+        return alertRepo.findAlertGroupsBySourceIp().stream()
+                .map(this::toGroupDto)
+                .collect(Collectors.toList());
+    }
+
+    private AlertGroupDTO toGroupDto(AlertGroupProjection g) {
+        AlertGroupDTO dto = new AlertGroupDTO();
+        dto.setSourceIp(g.getSourceIp());
+        dto.setSourceMac(g.getSourceMac());
+        dto.setAlertCount(g.getAlertCount());
+        dto.setFirstSeen(g.getFirstSeen());
+        dto.setLastSeen(g.getLastSeen());
+        dto.setThreatTypes(g.getThreatTypes());
+        dto.setSeverity(rankToSeverity(g.getSeverityRank()));
+
+        List<ForensicCase> existing = getBySuspectIp(g.getSourceIp());
+        dto.setHasExistingCase(!existing.isEmpty());
+        if (!existing.isEmpty()) {
+            ForensicCase c = existing.get(0);
+            dto.setExistingCaseId(c.getId());
+            dto.setExistingCaseNumber(c.getCaseNumber());
+        }
+        return dto;
+    }
+
+    private String rankToSeverity(Integer rank) {
+        if (rank == null) return "LOW";
+        switch (rank) {
+            case 4: return "CRITICAL";
+            case 3: return "HIGH";
+            case 2: return "MEDIUM";
+            default: return "LOW";
+        }
+    }
+
+    private int severityRank(String severity) {
+        if (severity == null) return 0;
+        switch (severity.toUpperCase()) {
+            case "CRITICAL": return 4;
+            case "HIGH": return 3;
+            case "MEDIUM": return 2;
+            case "LOW": return 1;
+            default: return 0;
+        }
+    }
+
+    /**
+     * Creates one case per source IP, reusing create() so every existing
+     * behavior (alert auto-linking, timeline seeding) stays consistent.
+     * Dedup rule: if a case already exists for this IP, return it instead
+     * of creating a second one — per your requirement, no duplicate cases
+     * for the same IP.
+     */
+    @Transactional
+    public ForensicCase createFromIpGroup(String suspectIp, String createdBy) {
+        List<ForensicCase> existing = getBySuspectIp(suspectIp);
+        if (!existing.isEmpty()) {
+            return existing.get(0);
+        }
+
+        List<Alert> alerts = alertRepo.findBySourceIpOrderByTimestampAsc(suspectIp);
+        if (alerts.isEmpty()) {
+            throw new RuntimeException("No alerts found for IP: " + suspectIp);
+        }
+
+        String threatTypes = alerts.stream()
+                .map(Alert::getThreatType)
+                .distinct()
+                .collect(Collectors.joining(", "));
+
+        String highestSeverity = alerts.stream()
+                .map(Alert::getSeverity)
+                .max(Comparator.comparingInt(this::severityRank))
+                .orElse("MEDIUM");
+
+        ForensicCase fc = new ForensicCase();
+        fc.setTitle("Investigation: " + threatTypes + " from " + suspectIp);
+        fc.setSuspectIp(suspectIp);
+        fc.setSuspectMac(alerts.get(alerts.size() - 1).getSourceMac());
+        fc.setThreatType(threatTypes);
+        fc.setSeverity(highestSeverity);
+        fc.setPriority("MEDIUM");
+
+        return create(fc, createdBy);
     }
 }

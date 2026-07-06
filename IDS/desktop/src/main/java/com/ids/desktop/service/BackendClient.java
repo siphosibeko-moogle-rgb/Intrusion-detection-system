@@ -1,6 +1,7 @@
 package com.ids.desktop.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.ids.desktop.model.AlertGroupItem;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ids.desktop.model.AlertItem;
 import com.ids.desktop.model.CaseItem;
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -23,20 +25,20 @@ public class BackendClient {
     private static final DateTimeFormatter FMT =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                          .withZone(ZoneId.systemDefault());
-    
 
-    private final String       baseUrl;
+
+    private final String baseUrl;
     private final OkHttpClient http;
-    private final ObjectMapper mapper    = new ObjectMapper();
-    private       String       jwtToken = "";
+    private final ObjectMapper mapper = new ObjectMapper();
+    private String jwtToken = "";
 
     public void invalidateSession() { jwtToken = ""; }
 
     public BackendClient(String baseUrl) {
         this.baseUrl = baseUrl;
-        this.http    = new OkHttpClient.Builder()
-            .connectTimeout(8,  TimeUnit.SECONDS)
-            .readTimeout(10,    TimeUnit.SECONDS)
+        this.http = new OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
             .build();
     }
 
@@ -58,7 +60,7 @@ public class BackendClient {
     }
 
     public boolean isLoggedIn() { return !jwtToken.isEmpty(); }
-    public String  getBaseUrl() { return baseUrl; }
+    public String getBaseUrl() { return baseUrl; }
 
     // ── CASE DETAIL PANEL SUPPORT ────────────────────────────────────────────
     // CaseDetailPanel.java (com.ids.desktop.controller) needs raw GET/POST/PUT/
@@ -85,22 +87,22 @@ public class BackendClient {
 
     // ── ALERTS ────────────────────────────────────────────────────────────
 
-    public List<AlertItem> fetchAlerts()                         throws IOException {
+    public List<AlertItem> fetchAlerts() throws IOException {
         return fetchAlerts("/api/alerts");
     }
-    public List<AlertItem> fetchBySeverity(String sev)           throws IOException {
+    public List<AlertItem> fetchBySeverity(String sev) throws IOException {
         return fetchAlerts("/api/alerts?severity=" + sev);
     }
-    public List<AlertItem> fetchByType(String type)              throws IOException {
+    public List<AlertItem> fetchByType(String type) throws IOException {
         return fetchAlerts("/api/alerts?type=" + encode(type));
     }
-    public List<AlertItem> fetchBySourceIp(String ip)            throws IOException {
+    public List<AlertItem> fetchBySourceIp(String ip) throws IOException {
         return fetchAlerts("/api/alerts?sourceIp=" + ip);
     }
-    public List<AlertItem> fetchBySourceMac(String mac)          throws IOException {
+    public List<AlertItem> fetchBySourceMac(String mac) throws IOException {
         return fetchAlerts("/api/alerts?sourceMac=" + encode(mac));
     }
-    public List<AlertItem> fetchSince(long epochMs)              throws IOException {
+    public List<AlertItem> fetchSince(long epochMs) throws IOException {
         return fetchAlerts("/api/alerts?sinceMs=" + epochMs);
     }
 
@@ -108,16 +110,16 @@ public class BackendClient {
         List<AlertItem> list = new ArrayList<>();
         for (JsonNode n : mapper.readTree(get(path))) {
             list.add(new AlertItem(
-                formatTs(textOf(n, "timestamp",   "")),
-                textOf(n, "severity",             ""),
-                textOf(n, "threatType",           ""),
-                textOf(n, "sourceIp",             ""),
-                textOf(n, "sourceMac",            ""),
-                textOf(n, "destIp",               ""),
-                textOf(n, "protocol",             ""),
-                textOf(n, "requestType",          ""),
-                intOf(n,  "packetCount",           0),
-                textOf(n, "details",              "")
+                formatTs(textOf(n, "timestamp", "")),
+                textOf(n, "severity", ""),
+                textOf(n, "threatType", ""),
+                textOf(n, "sourceIp", ""),
+                textOf(n, "sourceMac", ""),
+                textOf(n, "destIp", ""),
+                textOf(n, "protocol", ""),
+                textOf(n, "requestType", ""),
+                intOf(n, "packetCount", 0),
+                textOf(n, "details", "")
             ));
         }
         return list;
@@ -133,16 +135,16 @@ public class BackendClient {
         List<AlertItem> list = new ArrayList<>();
         for (JsonNode n : mapper.readTree(get("/api/alerts/summary"))) {
             AlertItem item = new AlertItem(
-                formatTs(textOf(n, "lastSeen",    "")),
-                textOf(n, "severity",             ""),
-                textOf(n, "threatType",           ""),
-                textOf(n, "sourceIp",             ""),
-                textOf(n, "sourceMac",            ""),
-                textOf(n, "destIp",               ""),
-                textOf(n, "protocol",             ""),
-                textOf(n, "requestType",          ""),
-                intOf(n,  "packetCount",           0),
-                textOf(n, "details",              "")
+                formatTs(textOf(n, "lastSeen", "")),
+                textOf(n, "severity", ""),
+                textOf(n, "threatType", ""),
+                textOf(n, "sourceIp", ""),
+                textOf(n, "sourceMac", ""),
+                textOf(n, "destIp", ""),
+                textOf(n, "protocol", ""),
+                textOf(n, "requestType", ""),
+                intOf(n, "packetCount", 0),
+                textOf(n, "details", "")
             );
             // FIX: map the summary row's database id so delete works
             item.setId(longOf(n, "id", 0L));
@@ -191,10 +193,10 @@ public class BackendClient {
         List<MyWhitelistItem> list = new ArrayList<>();
         for (JsonNode n : mapper.readTree(get("/api/my-whitelist"))) {
             list.add(new MyWhitelistItem(
-                longOf(n,  "id",      0L),
-                textOf(n,  "ip",      ""),
-                textOf(n,  "mac",     ""),
-                textOf(n,  "label",   ""),
+                longOf(n, "id", 0L),
+                textOf(n, "ip", ""),
+                textOf(n, "mac", ""),
+                textOf(n, "label", ""),
                 formatTs(textOf(n, "addedAt", ""))
             ));
         }
@@ -217,21 +219,21 @@ public class BackendClient {
         List<OrgWhitelistItem> list = new ArrayList<>();
         for (JsonNode n : mapper.readTree(get("/api/org-whitelist"))) {
             list.add(new OrgWhitelistItem(
-                longOf(n,    "id",       0L),
-                textOf(n,    "ip",       ""),
-                textOf(n,    "orgName",  ""),
-                textOf(n,    "asn",      ""),
-                textOf(n,    "country",  ""),
-                intOf(n,     "hits",      0),
-                boolOf(n,    "approved", false),
+                longOf(n, "id", 0L),
+                textOf(n, "ip", ""),
+                textOf(n, "orgName", ""),
+                textOf(n, "asn", ""),
+                textOf(n, "country", ""),
+                intOf(n, "hits", 0),
+                boolOf(n, "approved", false),
                 formatTs(textOf(n, "lastSeen", ""))
             ));
         }
         return list;
     }
 
-    public void approveOrg(long id)     throws IOException { patch("/api/org-whitelist/" + id + "/approve"); }
-    public void approveAllOrgs()        throws IOException { patch("/api/org-whitelist/approve-all"); }
+    public void approveOrg(long id) throws IOException { patch("/api/org-whitelist/" + id + "/approve"); }
+    public void approveAllOrgs() throws IOException { patch("/api/org-whitelist/approve-all"); }
     public void deleteOrgEntry(long id) throws IOException { delete("/api/org-whitelist/" + id); }
 
     // ── FORENSIC CASES ────────────────────────────────────────────────────
@@ -239,10 +241,10 @@ public class BackendClient {
     public List<CaseItem> fetchCases() throws IOException {
         return fetchCases("/api/forensics/cases");
     }
-    public List<CaseItem> fetchCasesByStatus(String status)    throws IOException {
+    public List<CaseItem> fetchCasesByStatus(String status) throws IOException {
         return fetchCases("/api/forensics/cases?status=" + status);
     }
-    public List<CaseItem> fetchCasesBySuspectIp(String ip)     throws IOException {
+    public List<CaseItem> fetchCasesBySuspectIp(String ip) throws IOException {
         return fetchCases("/api/forensics/cases?suspectIp=" + ip);
     }
 
@@ -274,15 +276,15 @@ public class BackendClient {
     }
 
     public void createCase(String title, String description, String suspectIp,
-                           String suspectMac, String severity, String threatType)
+                            String suspectMac, String severity, String threatType)
             throws IOException {
         String body = mapper.writeValueAsString(Map.of(
-            "title",       title,
+            "title", title,
             "description", description,
-            "suspectIp",   suspectIp,
-            "suspectMac",  suspectMac,
-            "severity",    severity,
-            "threatType",  threatType
+            "suspectIp", suspectIp,
+            "suspectMac", suspectMac,
+            "severity", severity,
+            "threatType", threatType
         ));
         post("/api/forensics/cases", body);
     }
@@ -301,12 +303,12 @@ public class BackendClient {
         for (JsonNode n : mapper.readTree(get("/api/alerts/flagged-ips"))) {
             list.add(new FlaggedIpItem(
                 0L,
-                textOf(n, "ip",         ""),
-                textOf(n, "mac",        ""),
+                textOf(n, "ip", ""),
+                textOf(n, "mac", ""),
                 textOf(n, "threatType", ""),
-                textOf(n, "protocol",   ""),
-                intOf(n,  "hits",        0),
-                textOf(n, "lastSeen",   "")
+                textOf(n, "protocol", ""),
+                intOf(n, "hits", 0),
+                textOf(n, "lastSeen", "")
             ));
         }
         return list;
@@ -415,5 +417,74 @@ public class BackendClient {
         } catch (Exception e) {
             return s;
         }
+    }
+    /**
+     * Fetches one row per source IP that has ever triggered an alert,
+     * for the "Create Cases from Alerts" screen. Backed by a single
+     * GROUP BY query server-side — see
+     * ForensicCaseService.getAlertGroupsForCaseCreation().
+     */
+    public List<AlertGroupItem> fetchAlertGroups() throws IOException {
+        List<AlertGroupItem> list = new ArrayList<>();
+        for (JsonNode n : mapper.readTree(get("/api/forensics/cases/alert-groups"))) {
+            list.add(new AlertGroupItem(
+                textOf(n, "sourceIp", ""),
+                textOf(n, "sourceMac", ""),
+                longOf(n, "alertCount", 0L),
+                formatTs(textOf(n, "firstSeen", "")),
+                formatTs(textOf(n, "lastSeen", "")),
+                textOf(n, "threatTypes", ""),
+                textOf(n, "severity", ""),
+                boolOf(n, "hasExistingCase", false),
+                longOf(n, "existingCaseId", 0L),
+                textOf(n, "existingCaseNumber", "")
+            ));
+        }
+        return list;
+    }
+
+    /**
+     * Creates a case from all alerts belonging to one source IP, or
+     * returns the existing case if one is already open for that IP —
+     * see the idempotency note on ForensicCaseService.createFromIpGroup().
+     * We re-fetch by suspectIp afterward rather than trying to parse the
+     * POST response body, so this works identically whether the backend
+     * just created a case or handed back a pre-existing one.
+     */
+    public JsonNode createCaseFromIp(String ip) throws IOException {
+        post("/api/forensics/cases/from-ip/" + encode(ip), "{}");
+        JsonNode matches = mapper.readTree(get("/api/forensics/cases?suspectIp=" + ip));
+        return matches.isArray() && matches.size() > 0 ? matches.get(0) : matches;
+    }
+
+    /**
+     * Fetches every alert exchanged between two IPs, in either direction,
+     * for the "View Conversation" window in IpInvestigationPanel.
+     *
+     * FIX: this used to be an unimplemented stub returning null, which caused
+     * a NullPointerException in populateConversationWindow() the moment
+     * anyone clicked "View Conversation" (the Task reported success since
+     * no exception was thrown, so the failure handler never caught it).
+     *
+     * There's no dedicated /api/alerts?destIp= filter on the backend, so
+     * rather than add a new endpoint we reuse the existing sourceIp filter
+     * twice (A as source / B as dest, then B as source / A as dest) and
+     * merge client-side. This keeps the fix contained to the desktop client
+     * and doesn't require touching the Spring controller.
+     */
+    public List<AlertItem> fetchConversation(String srcIp, String destIp) throws IOException {
+        List<AlertItem> result = new ArrayList<>();
+
+        for (AlertItem item : fetchBySourceIp(srcIp)) {
+            if (destIp.equals(item.getDestIp())) result.add(item);
+        }
+        for (AlertItem item : fetchBySourceIp(destIp)) {
+            if (srcIp.equals(item.getDestIp())) result.add(item);
+        }
+
+        // Timestamps are already formatted "yyyy-MM-dd HH:mm:ss", so a plain
+        // string comparison sorts them chronologically without re-parsing.
+        result.sort(Comparator.comparing(AlertItem::getTimestamp));
+        return result;
     }
 }

@@ -2,11 +2,11 @@ package com.ids.detectors;
 
 import com.ids.alerts.AlertManager;
 import com.ids.models.PacketContext;
-import com.ids.models.PacketRecord;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,27 +14,25 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BruteForceDetector implements Detector {
 
     private static final Set<Integer> AUTH_PORTS = Set.of(
-        22,    // SSH
-        3389,  // RDP
-        21,    // FTP
-        23     // Telnet
+        22, // SSH
+        3389, // RDP
+        21, // FTP
+        23 // Telnet
     );
 
     // Thresholds
-    private static final int  ATTEMPT_THRESHOLD = 10; 
-    private static final long WINDOW_MS         = 60_000L;  
-    private static final long COOLDOWN_MS       = 300_000L; 
+    private static final int ATTEMPT_THRESHOLD = 10;
+    private static final long WINDOW_MS = 60_000L;
+    private static final long COOLDOWN_MS = 300_000L;
 
     // key = "srcIP:dstIP:dstPort"
-    private final Map<String, java.util.List<Long>> attemptMap = new ConcurrentHashMap<>();
-    private final Map<String, Long>                 lastAlerts = new ConcurrentHashMap<>();
+    private final Map<String, List<Long>> attemptMap = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
     private final AlertManager alertManager;
-    private final String subnetPrefix;
 
-    public BruteForceDetector(AlertManager alertManager, String subnet) {
+    public BruteForceDetector(AlertManager alertManager) {
         this.alertManager = alertManager;
-        this.subnetPrefix = extractPrefix(subnet);
     }
 
     public void analyze(PacketContext ctx) {
@@ -43,11 +41,22 @@ public class BruteForceDetector implements Detector {
         int dstPort = ctx.getDstPort();
         if (!AUTH_PORTS.contains(dstPort)) return;
 
-        String srcIP  = ctx.getSrcIp();
-        String dstIP  = ctx.getDstIp();
+        // FIX: only count NEW connection attempts (pure SYN, matching the
+        // same pattern SynFloodDetector already uses), not every packet in
+        // the flow. Without this, a single long-lived legitimate SSH/RDP/
+        // FTP session — an admin's interactive terminal, an SFTP transfer,
+        // a chatty RDP screen update stream — generates far more than
+        // ATTEMPT_THRESHOLD packets in WINDOW_MS on its own, with zero
+        // actual login attempts involved. A brute force is repeated
+        // AUTHENTICATION attempts, i.e. repeated new connections, not
+        // general traffic volume on an auth port.
+        if (!ctx.isTcp() || !ctx.isSyn() || ctx.isAck()) return;
+
+        String srcIP = ctx.getSrcIp();
+        String dstIP = ctx.getDstIp();
         String srcMac = ctx.getSrcMac();
         String dstMac = ctx.getDstMac();
-        String proto  = ctx.getProtocol();
+        String proto = ctx.getProtocol();
 
         // Only flag external → internal or internal → internal (not loopback)
         if (srcIP.startsWith("127.")) return;
@@ -55,11 +64,11 @@ public class BruteForceDetector implements Detector {
         long now = System.currentTimeMillis();
         String key = srcIP + ":" + dstIP + ":" + dstPort;
 
-        java.util.List<Long> attempts =
-                attemptMap.computeIfAbsent(
-                        key,
-                        k -> java.util.Collections.synchronizedList(
-                                new java.util.ArrayList<>()));
+        List<Long> attempts =
+            attemptMap.computeIfAbsent(
+                key,
+                k -> java.util.Collections.synchronizedList(
+                    new java.util.ArrayList<>()));
 
         attempts.add(now);
 
@@ -74,11 +83,6 @@ public class BruteForceDetector implements Detector {
             return;
         }
 
-        // this gate existed but was never called, so every packet past
-        // the threshold re-raised a brand new alert (no dedup at all). That
-        // is why the same source/dest/port combo could fire dozens of
-        // CRITICAL alerts inside a few minutes. Now we only re-alert for a
-        // given key once the cooldown window has elapsed.
         if (!shouldAlert(key, now)) {
             return;
         }
@@ -94,14 +98,14 @@ public class BruteForceDetector implements Detector {
         }
 
         alertManager.raise(new ThreatEvent(
-                ThreatType.BRUTE_FORCE_ATTEMPT,
-                srcIP, srcMac,
-                dstIP, dstMac,
-                count, WINDOW_MS,
-                "Brute force on port " + dstPort + ": " + srcIP + " → " + dstIP
-                        + " (" + count + " attempts/min)",
-                sev,
-                proto, "BRUTE_FORCE", dstPort
+            ThreatType.BRUTE_FORCE_ATTEMPT,
+            srcIP, srcMac,
+            dstIP, dstMac,
+            count, WINDOW_MS,
+            "Brute force on port " + dstPort + ": " + srcIP + " → " + dstIP
+            + " (" + count + " connection attempts/min)",
+            sev,
+            proto, "BRUTE_FORCE", dstPort
         ));
     }
 
@@ -114,16 +118,10 @@ public class BruteForceDetector implements Detector {
         return false;
     }
 
-    private String extractPrefix(String subnet) {
-        if (subnet == null) return "192.168.1.";
-        String[] p = subnet.split("/")[0].split("\\.");
-        return p[0] + "." + p[1] + "." + p[2] + ".";
-    }
-
     public void cleanup() {
         long now = System.currentTimeMillis();
         attemptMap.entrySet().removeIf(entry -> {
-            java.util.List<Long> timestamps = entry.getValue();
+            List<Long> timestamps = entry.getValue();
 
             synchronized (timestamps) {
                 timestamps.removeIf(ts -> (now - ts) > WINDOW_MS);
@@ -132,6 +130,6 @@ public class BruteForceDetector implements Detector {
             }
         });
         lastAlerts.entrySet().removeIf(e ->
-                now - e.getValue() > 600_000L);
+            now - e.getValue() > 600_000L);
     }
 }
