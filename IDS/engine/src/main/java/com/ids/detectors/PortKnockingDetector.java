@@ -5,6 +5,7 @@ import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
+import com.ids.network.NetworkWhitelist;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,29 +18,42 @@ import java.util.concurrent.ConcurrentHashMap;
  * non-standard port).
  *
  * Logic:
- *   - Track closed-port SYN hits per source IP in a sliding time window.
- *   - A "knock" is a SYN to a port that receives no reply (connection rejected /
- *     no ACK back) — in practice we just watch for SYN-only packets to ports
- *     that are not part of normal traffic.
- *   - If an IP hits >= KNOCK_SEQUENCE_MIN distinct ports within WINDOW_MS,
- *     each hit spaced at least MIN_KNOCK_GAP_MS apart (deliberate, not a flood),
- *     raise a PORT_KNOCKING alert.
+ * - Track closed-port SYN hits per source IP in a sliding time window.
+ * - A "knock" is a SYN to a port that receives no reply (connection rejected /
+ *   no ACK back) — in practice we just watch for SYN-only packets to ports
+ *   that are not part of normal traffic.
+ * - If an IP hits >= KNOCK_SEQUENCE_MIN distinct ports within WINDOW_MS,
+ *   each hit spaced at least MIN_KNOCK_GAP_MS apart (deliberate, not a flood),
+ *   raise a PORT_KNOCKING alert.
+ *
+ * NOTE: unlike most other detectors in this codebase, this one deliberately
+ * does NOT restrict to internal traffic — port knocking is specifically a
+ * perimeter/external-attacker technique against your public-facing
+ * firewall, so checking isInternal() here would be wrong, not an oversight.
+ *
+ * TUNING CAVEAT: KNOCK_SEQUENCE_MIN=3 within 10s doesn't require a specific,
+ * pre-arranged port sequence (real port-knocking is normally a secret,
+ * exact sequence) — it can also match ordinary client fallback behavior
+ * (an app trying several candidate ports when the first is blocked). Left
+ * as-is here pending real traffic data rather than guessing a new number.
  */
 public class PortKnockingDetector implements Detector {
 
-    private static final int  KNOCK_SEQUENCE_MIN = 3;        // min distinct ports to count as a sequence
-    private static final long WINDOW_MS          = 10_000L;  // sequence must complete within 10 s
-    private static final long MIN_KNOCK_GAP_MS   = 100L;     // knocks are deliberate — not a flood
-    private static final long COOLDOWN_MS        = 15_000L;  // suppress repeat alerts per IP
+    private static final int KNOCK_SEQUENCE_MIN = 3; // min distinct ports to count as a sequence
+    private static final long WINDOW_MS = 10_000L; // sequence must complete within 10 s
+    private static final long MIN_KNOCK_GAP_MS = 100L; // knocks are deliberate — not a flood
+    private static final long COOLDOWN_MS = 15_000L; // suppress repeat alerts per IP
 
     // Per-source IP: ordered list of (port, timestamp) knocks within the window
-    private final Map<String, List<long[]>> knockLog   = new ConcurrentHashMap<>();
-    private final Map<String, Long>         lastAlerts = new ConcurrentHashMap<>();
+    private final Map<String, List<long[]>> knockLog = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
     private final AlertManager alertManager;
+    private final NetworkWhitelist whitelist;
 
-    public PortKnockingDetector(AlertManager alertManager) {
+    public PortKnockingDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
+        this.whitelist = whitelist;
     }
 
     public void analyze(PacketContext ctx) {
@@ -48,17 +62,23 @@ public class PortKnockingDetector implements Detector {
         if (!ctx.isTcp()) return;
         if (!ctx.isSyn() || ctx.isAck()) return;
 
-        String srcIP  = ctx.getSrcIp();
+        String srcIP = ctx.getSrcIp();
         String srcMac = ctx.getSrcMac();
-        String dstIP  = ctx.getDstIp();
+        String dstIP = ctx.getDstIp();
         String dstMac = ctx.getDstMac();
-        int    port   = ctx.getDstPort();
-        long   now    = ctx.getTimestamp();
+        int port = ctx.getDstPort();
+        long now = ctx.getTimestamp();
 
         if (srcIP == null) return;
 
+        // FIX: skip known-legitimate scanners/automation hosts before ever
+        // building up knock history for them — same shared allowlist used
+        // by NmapScanDetector, HttpAnomalyDetector, LateralMovementDetector,
+        // LowAndSlowScanDetector, and SqlInjectionDetector.
+        if (whitelist.isTrustedScanner(srcIP)) return;
+
         List<long[]> knocks = knockLog.computeIfAbsent(srcIP,
-                k -> new ArrayList<>());
+            k -> new ArrayList<>());
 
         synchronized (knocks) {
 
@@ -76,9 +96,9 @@ public class PortKnockingDetector implements Detector {
 
             // Count distinct ports in the current window
             long distinctPorts = knocks.stream()
-                    .mapToLong(e -> e[0])
-                    .distinct()
-                    .count();
+                .mapToLong(e -> e[0])
+                .distinct()
+                .count();
 
             if (distinctPorts >= KNOCK_SEQUENCE_MIN) {
 
@@ -90,18 +110,18 @@ public class PortKnockingDetector implements Detector {
                 String portSequence = buildPortSequence(knocks);
 
                 alertManager.raise(new ThreatEvent(
-                        ThreatType.PORT_KNOCKING,
-                        srcIP,
-                        srcMac,
-                        dstIP,
-                        dstMac,
-                        (int) distinctPorts,
-                        WINDOW_MS,
-                        "Port knocking sequence from " + srcIP + " → ports: " + portSequence,
-                        Severity.HIGH,
-                        "TCP",
-                        "SYN",
-                        port
+                    ThreatType.PORT_KNOCKING,
+                    srcIP,
+                    srcMac,
+                    dstIP,
+                    dstMac,
+                    (int) distinctPorts,
+                    WINDOW_MS,
+                    "Port knocking sequence from " + srcIP + " → ports: " + portSequence,
+                    Severity.HIGH,
+                    "TCP",
+                    "SYN",
+                    port
                 ));
 
                 knocks.clear();
@@ -123,7 +143,7 @@ public class PortKnockingDetector implements Detector {
         knockLog.entrySet().removeIf(e -> {
             synchronized (e.getValue()) {
                 return e.getValue().isEmpty() ||
-                       e.getValue().stream().allMatch(entry -> (now - entry[1]) > WINDOW_MS);
+                    e.getValue().stream().allMatch(entry -> (now - entry[1]) > WINDOW_MS);
             }
         });
         lastAlerts.entrySet().removeIf(e -> (now - e.getValue()) > COOLDOWN_MS * 2);

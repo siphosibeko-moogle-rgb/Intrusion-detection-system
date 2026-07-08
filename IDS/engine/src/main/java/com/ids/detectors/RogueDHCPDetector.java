@@ -5,52 +5,58 @@ import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
+import com.ids.network.NetworkWhitelist;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Detects rogue DHCP servers — any unknown MAC sending DHCP OFFERs or ACKs.
  *
  * Logic:
- *   DHCP server → client traffic is UDP src=67 dst=68.
- *   The legitimate server MAC is known at startup.
- *   Any DHCP OFFER (type 2) or ACK (type 5) from a different MAC is a rogue
- *   server that can redirect all client traffic through an attacker gateway.
+ * DHCP server → client traffic is UDP src=67 dst=68.
+ * If the raw UDP payload is available, we verify DHCP option 53 (message
+ * type). If not, we flag any un-trusted MAC on port 67→68 conservatively.
  *
- *   If the raw UDP payload is available, we verify DHCP option 53 (message
- *   type). If not, we flag any unknown MAC on port 67→68 conservatively.
+ * FIX — SECURITY BYPASS REMOVED:
+ * This detector used to have an "auto-learn" mode: if no trusted MAC was
+ * configured, it silently trusted whichever DHCP server sent the FIRST
+ * OFFER/ACK after startup. That is a real bypass, not just a tuning issue —
+ * classic DHCP-spoofing attacks work by racing the legitimate DHCP server
+ * to answer client requests first (win the race, become the client's
+ * gateway/DNS, sit in the middle of their traffic). If the engine
+ * (re)started at the wrong moment and an attacker's rogue server answered
+ * first, THE ATTACKER got permanently trusted and the real server got
+ * flagged as rogue — the detector's only defense could be defeated by
+ * exactly the attack it exists to catch.
+ *
+ * There is no implicit trust path anymore. Trusted DHCP server MACs must
+ * be configured explicitly via NetworkWhitelist (network.dhcp.trusted.servers
+ * in ids-whitelist.properties). If none are configured, this detector
+ * alerts on every DHCP server response it sees — including your legitimate
+ * one — until configured. That is a deliberately noisy default: noisy-but-
+ * safe beats silent-but-exploitable. NetworkWhitelist logs a startup
+ * warning when this list is empty specifically so the noise has an obvious
+ * explanation instead of looking like a bug.
  */
 public class RogueDHCPDetector implements Detector {
 
-    private static final int  DHCP_SERVER_PORT = 67;
-    private static final int  DHCP_CLIENT_PORT = 68;
-    private static final long COOLDOWN_MS      = 10_000L;
+    private static final int DHCP_SERVER_PORT = 67;
+    private static final int DHCP_CLIENT_PORT = 68;
+    private static final long COOLDOWN_MS = 10_000L;
 
-    private final Set<String>       trustedMacs = ConcurrentHashMap.newKeySet();
-    private final Map<String, Long> lastAlerts  = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
     private final AlertManager alertManager;
+    private final NetworkWhitelist whitelist;
 
-    /**
-     * @param trustedServerMac MAC of the legitimate DHCP server (case-insensitive).
-     *                         Pass null to auto-learn the first server seen.
-     */
-    public RogueDHCPDetector(AlertManager alertManager, String trustedServerMac) {
+    public RogueDHCPDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
-        if (trustedServerMac != null && !trustedServerMac.isBlank()) {
-            trustedMacs.add(trustedServerMac.toLowerCase());
-        }
-    }
-
-    /** Add extra trusted MACs (e.g. redundant DHCP servers). */
-    public void addTrustedMac(String mac) {
-        if (mac != null) trustedMacs.add(mac.toLowerCase());
+        this.whitelist = whitelist;
     }
 
     /**
-     * @param ctx        parsed packet context
+     * @param ctx parsed packet context
      * @param udpPayload raw UDP payload bytes — pass null if unavailable
      */
     public void analyze(PacketContext ctx, byte[] udpPayload) {
@@ -59,26 +65,23 @@ public class RogueDHCPDetector implements Detector {
         if (ctx.getSrcPort() != DHCP_SERVER_PORT) return;
         if (ctx.getDstPort() != DHCP_CLIENT_PORT) return;
 
-        String srcIP  = ctx.getSrcIp();
+        String srcIP = ctx.getSrcIp();
         String srcMac = ctx.getSrcMac();
-        String dstIP  = ctx.getDstIp();
+        String dstIP = ctx.getDstIp();
         String dstMac = ctx.getDstMac();
-        long   now    = ctx.getTimestamp();
+        long now = ctx.getTimestamp();
 
         if (srcMac == null) return;
 
-        String srcMacLower = srcMac.toLowerCase();
-
-        // Auto-learn mode: trust the first DHCP server we see
-        if (trustedMacs.isEmpty()) {
-            trustedMacs.add(srcMacLower);
-            return;
-        }
-
-        if (trustedMacs.contains(srcMacLower)) return;
+        // FIX: no more auto-learn. Every DHCP server response from a MAC
+        // that isn't explicitly configured as trusted gets flagged — full
+        // stop, no "first one wins" exception.
+        if (whitelist.isTrustedDhcpServer(srcMac)) return;
 
         // Unknown MAC on DHCP server port — check message type if payload available
         if (udpPayload != null && !isDhcpServerMessage(udpPayload)) return;
+
+        String srcMacLower = srcMac.toLowerCase();
 
         Long last = lastAlerts.get(srcMacLower);
         if (last != null && (now - last) < COOLDOWN_MS) return;
@@ -86,13 +89,15 @@ public class RogueDHCPDetector implements Detector {
         lastAlerts.put(srcMacLower, now);
 
         alertManager.raise(new ThreatEvent(
-                ThreatType.ROGUE_DHCP,
-                srcIP, srcMac, dstIP, dstMac,
-                1, 0,
-                "Rogue DHCP server: " + srcMac + " (" + srcIP + ") — may redirect clients to malicious gateway",
-                Severity.CRITICAL,
-                "UDP", "DHCP",
-                DHCP_SERVER_PORT
+            ThreatType.ROGUE_DHCP,
+            srcIP, srcMac, dstIP, dstMac,
+            1, 0,
+            "Rogue DHCP server: " + srcMac + " (" + srcIP + ") — may redirect clients to malicious gateway. "
+            + "If this is actually your legitimate DHCP server, add its MAC to "
+            + "network.dhcp.trusted.servers in ids-whitelist.properties.",
+            Severity.CRITICAL,
+            "UDP", "DHCP",
+            DHCP_SERVER_PORT
         ));
     }
 
@@ -111,8 +116,8 @@ public class RogueDHCPDetector implements Detector {
         int i = 240;
         while (i < p.length) {
             int opt = p[i] & 0xFF;
-            if (opt == 255) break;             // END
-            if (opt == 0)  { i++; continue; }  // PAD
+            if (opt == 255) break; // END
+            if (opt == 0) { i++; continue; } // PAD
             if (i + 1 >= p.length) break;
             int len = p[i + 1] & 0xFF;
             if (opt == 53 && len == 1 && i + 2 < p.length) {

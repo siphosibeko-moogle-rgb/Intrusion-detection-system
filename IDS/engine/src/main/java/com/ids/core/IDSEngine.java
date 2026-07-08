@@ -117,16 +117,16 @@ public class IDSEngine {
                                           whitelist.getWorkTimezone(), whitelist.isWeekendAlert());
         bruteForceDetector      = new BruteForceDetector(alertManager);
         beaconingDetector       = new BeaconingDetector(alertManager, whitelist);
-        lateralMovementDetector = new LateralMovementDetector(alertManager, subnet);
+        lateralMovementDetector = new LateralMovementDetector(alertManager, whitelist);
         httpAnomalyDetector     = new HttpAnomalyDetector(alertManager, whitelist);
-        rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist.getGateway());
+        rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist);
         fileTransferDetector    = new FileTransferDetector(alertManager, subnet,
                                           whitelist.getInternalServers());
         dataStagingDetector     = new DataStagingDetector(alertManager, subnet);
         ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, whitelist);
-        lowSlowDetector         = new LowAndSlowScanDetector(alertManager);
-        portKnockingDetector    = new PortKnockingDetector(alertManager);
-        sqlInjectionDetector    = new SqlInjectionDetector(alertManager);
+        lowSlowDetector         = new LowAndSlowScanDetector(alertManager, whitelist);
+        portKnockingDetector    = new PortKnockingDetector(alertManager, whitelist);
+        sqlInjectionDetector    = new SqlInjectionDetector(alertManager, whitelist);
         synFloodDetector        = new SynFloodDetector(alertManager);
 
         detectors.add(icmpDetector);

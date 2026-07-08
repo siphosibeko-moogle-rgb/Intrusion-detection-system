@@ -18,41 +18,41 @@ public class NetworkWhitelist {
     private String  timezone     = "Africa/Johannesburg";
     private boolean weekendAlert = true;
 
-    // FIX: subnet and gateway were hardcoded to "192.168.8." and "192.168.8.1".
-    //
-    // Why this was a bug:
-    //   Docker containers run on 172.17.x.x or 172.18.x.x by default.
-    //   Detectors that check if (srcIp.startsWith(subnet)) to identify "internal"
-    //   traffic would NEVER match Docker IPs, misclassifying all container traffic
-    //   as external. This affected DataExfiltrationDetector, BruteForceDetector,
-    //   LateralMovementDetector, AfterHoursDetector, and DataStagingDetector.
-    //
-    // Fix: read from ids-whitelist.properties. Defaults still work for home labs
-    //      but can be overridden. For a Docker environment with multiple subnets,
-    //      the subnet prefix should cover the bridge network.
-    //
-    // Example ids-whitelist.properties entries:
-    //   network.subnet=192.168.8.
-    //   network.gateway=192.168.8.1
-    //   network.docker.subnets=172.17.0.,172.18.0.,172.19.0.
-    private String       subnet         = "192.168.8.";
-    private String       gateway        = "192.168.8.1";
+    // FIX: no hardcoded fallback. A hardcoded subnet/gateway baked into
+    // source is fine on your own dev box, but it's a silent-wrong-answer
+    // trap the moment this runs anywhere else (a customer deployment, a
+    // second engine instance, CI). If ids-whitelist.properties is missing
+    // or fails to load, these stay null and isInternal() is null-guarded
+    // below to fail SAFE (treat nothing as internal, log loudly) rather
+    // than fail QUIET (silently match your home subnet's string prefix
+    // against a network it was never configured for).
+    private String       subnet         = null;
+    private String       gateway        = null;
     private List<String> dockerSubnets  = new ArrayList<>();
 
-    // FIX: these three sets used to back three methods that were left as
-    // auto-generated stubs returning false unconditionally — isKnownServer(),
-    // isTrustedScanner(), isTrustedBeaconDestination(). That compiled fine but
-    // silently defeated every detector fix that depended on them:
-    //   - NmapScanDetector / HttpAnomalyDetector kept alerting on your own
-    //     vulnerability scanner (isTrustedScanner always false)
-    //   - DataExfiltrationDetector's "(dynamic/DHCP device)" label was always
-    //     appended, even for known static servers (isKnownServer always false)
-    //   - BeaconingDetector's self-exclusion never excluded anything
-    //     (isTrustedBeaconDestination always false)
-    // All three are now real Sets, populated from properties below.
+    // trustedScanners is reused by NmapScanDetector, HttpAnomalyDetector,
+    // LateralMovementDetector, LowAndSlowScanDetector, and SqlInjectionDetector —
+    // the underlying concept is the same in all five: "this host is authorized
+    // to do things that structurally look like an attack." One list, one
+    // concept, rather than five near-duplicate allowlists that drift apart.
     private final Set<String> internalServers            = new HashSet<>();
     private final Set<String> trustedScanners             = new HashSet<>();
     private final Set<String> beaconTrustedDestinations   = new HashSet<>();
+
+    // FIX: replaces RogueDHCPDetector's auto-learn mode, which trusted
+    // whichever DHCP server answered FIRST after startup — a real security
+    // bypass, since DHCP-spoofing attacks work by racing the legitimate
+    // server to answer first. Trusted DHCP server MACs must now be
+    // configured explicitly; there is no automatic/implicit trust path.
+    private final Set<String> trustedDhcpServerMacs = new HashSet<>();
+
+    // Loose but effective: 6 groups of 2 hex chars, separated by ':' or '-'.
+    // Not RFC-perfect (doesn't reject e.g. locally-administered bit nuances),
+    // but it's exactly enough to reject "this is obviously not a MAC" input
+    // like an IPv4 address — which is precisely the failure mode we hit.
+    private static final java.util.regex.Pattern MAC_PATTERN =
+        java.util.regex.Pattern.compile(
+            "^[0-9a-f]{2}([:-][0-9a-f]{2}){5}$");
 
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
@@ -89,7 +89,9 @@ public class NetworkWhitelist {
         try (java.io.InputStream in = getClass().getClassLoader()
                 .getResourceAsStream("ids-whitelist.properties")) {
             if (in == null) {
-                System.err.println("[Whitelist] ids-whitelist.properties not found — using defaults");
+                System.err.println("[Whitelist] ids-whitelist.properties not found — "
+                    + "network.subnet/network.gateway are UNSET. isInternal() will "
+                    + "treat ALL traffic as external until this file is present.");
                 return;
             }
             java.util.Properties p = new java.util.Properties();
@@ -99,12 +101,24 @@ public class NetworkWhitelist {
             timezone     = p.getProperty("work.timezone", "Africa/Johannesburg");
             weekendAlert = Boolean.parseBoolean(p.getProperty("work.weekend.alert", "true"));
 
-            // FIX: read subnet and gateway from properties instead of hardcoding
-            subnet  = p.getProperty("network.subnet",  "192.168.8.");
-            gateway = p.getProperty("network.gateway", "192.168.8.1");
+            // FIX: no fallback default — see field comment above. getProperty()
+            // with no default returns null on a missing key, which is exactly
+            // what we want here: an explicit, checkable "not configured" state.
+            subnet  = p.getProperty("network.subnet");
+            gateway = p.getProperty("network.gateway");
 
-            // FIX: support multiple subnets for Docker environments
-            // Property: network.docker.subnets=172.17.0.,172.18.0.
+            if (subnet == null || subnet.isBlank()) {
+                System.err.println("[Whitelist] WARNING: network.subnet not set in "
+                    + "ids-whitelist.properties — isInternal() will treat ALL "
+                    + "traffic as external until this is configured.");
+                subnet = null;
+            }
+            if (gateway == null || gateway.isBlank()) {
+                System.err.println("[Whitelist] WARNING: network.gateway not set in "
+                    + "ids-whitelist.properties.");
+                gateway = null;
+            }
+
             String dockerSubnetsProp = p.getProperty("network.docker.subnets", "");
             if (!dockerSubnetsProp.isBlank()) {
                 for (String s : dockerSubnetsProp.split(",")) {
@@ -113,12 +127,7 @@ public class NetworkWhitelist {
                 }
             }
 
-            // FIX: actually parse server.N properties. This class's own
-            // job is to be the single source of truth for "is this a known
-            // internal server" — getInternalServers()/isKnownServer() were
-            // both dead until now regardless of what was configured here.
-            //   server.1=10.0.0.10
-            //   server.2=10.0.0.11
+            // server.1=10.0.0.10  server.2=10.0.0.11 ...
             for (String name : p.stringPropertyNames()) {
                 if (name.matches("server\\.\\d+")) {
                     String ip = p.getProperty(name, "").trim();
@@ -126,12 +135,7 @@ public class NetworkWhitelist {
                 }
             }
 
-            // FIX: authorized internal security tools (Nessus/OpenVAS/scheduled
-            // nmap compliance scans) behave identically to the attacks
-            // NmapScanDetector and HttpAnomalyDetector are built to catch —
-            // port sweeps and scanner User-Agents are the SAME signal whether
-            // it's an attacker or your own vulnerability-management program.
-            //   network.trusted.scanners=10.0.0.50,10.0.0.51
+            // network.trusted.scanners=10.0.0.50,10.0.0.51
             String trustedScannersProp = p.getProperty("network.trusted.scanners", "");
             if (!trustedScannersProp.isBlank()) {
                 for (String s : trustedScannersProp.split(",")) {
@@ -140,16 +144,39 @@ public class NetworkWhitelist {
                 }
             }
 
-            // FIX: known-legitimate periodic destinations (this engine's own
-            // backend, monitoring/license servers) exempted from
-            // BeaconingDetector, which otherwise can't distinguish a fixed-
-            // interval malware beacon from a fixed-interval monitoring agent.
-            //   network.beacon.trusted.destinations=10.0.0.5,203.0.113.9
+            // network.beacon.trusted.destinations=10.0.0.5,203.0.113.9
             String beaconProp = p.getProperty("network.beacon.trusted.destinations", "");
             if (!beaconProp.isBlank()) {
                 for (String s : beaconProp.split(",")) {
                     String trimmed = s.trim();
                     if (!trimmed.isEmpty()) beaconTrustedDestinations.add(trimmed);
+                }
+            }
+
+            // FIX: replaces RogueDHCPDetector's auto-learn mode entirely.
+            // MACs of legitimate DHCP servers (including any redundant/HA
+            // pair) must be listed explicitly.
+            //   network.dhcp.trusted.servers=aa:bb:cc:dd:ee:ff,11:22:33:44:55:66
+            String dhcpProp = p.getProperty("network.dhcp.trusted.servers", "");
+            if (!dhcpProp.isBlank()) {
+                for (String s : dhcpProp.split(",")) {
+                    String trimmed = s.trim().toLowerCase();
+                    if (trimmed.isEmpty()) continue;
+                    if (!MAC_PATTERN.matcher(trimmed).matches()) {
+                        // FAIL LOUD: an entry that isn't MAC-shaped (e.g. an IP
+                        // address pasted in by mistake) would otherwise sit in the
+                        // set silently and never match anything, leaving
+                        // RogueDHCPDetector effectively unconfigured with no signal
+                        // that anything is wrong. This is exactly the bug class that
+                        // caused the original getGateway()-into-MAC-constructor
+                        // failure — refuse to repeat it here.
+                        System.err.println("[Whitelist] IGNORING invalid entry in "
+                            + "network.dhcp.trusted.servers: '" + trimmed + "' does "
+                            + "not look like a MAC address (expected format "
+                            + "aa:bb:cc:dd:ee:ff). Fix ids-whitelist.properties.");
+                        continue;
+                    }
+                    trustedDhcpServerMacs.add(trimmed);
                 }
             }
 
@@ -161,9 +188,17 @@ public class NetworkWhitelist {
             if (!internalServers.isEmpty())
                 System.out.println("[Whitelist] Known internal servers: " + internalServers);
             if (!trustedScanners.isEmpty())
-                System.out.println("[Whitelist] Trusted scanners: " + trustedScanners);
+                System.out.println("[Whitelist] Trusted scanners/automation hosts: " + trustedScanners);
             if (!beaconTrustedDestinations.isEmpty())
                 System.out.println("[Whitelist] Trusted beacon destinations: " + beaconTrustedDestinations);
+            if (trustedDhcpServerMacs.isEmpty()) {
+                System.err.println("[Whitelist] WARNING: no network.dhcp.trusted.servers configured — "
+                    + "RogueDHCPDetector will alert on EVERY DHCP server response, including your "
+                    + "legitimate one, until this is set. A noisy default is safer than silently "
+                    + "trusting whichever DHCP server answers first.");
+            } else {
+                System.out.println("[Whitelist] Trusted DHCP servers: " + trustedDhcpServerMacs);
+            }
 
         } catch (Exception e) {
             System.err.println("[Whitelist] Could not load properties: " + e.getMessage());
@@ -256,17 +291,16 @@ public class NetworkWhitelist {
         return approvedOrgIps.contains(normalize(ip));
     }
 
-    /**
-     * FIX: isInternal() now considers both the primary subnet AND Docker subnets.
-     *
-     * Previously there was no isInternal() method — each detector did its own
-     * startsWith(subnet) check. This centralizes the logic and makes Docker
-     * container IPs (172.x.x.x) correctly classified as internal when configured.
-     */
     public boolean isInternal(String ip) {
         if (ip == null) return false;
         String n = normalize(ip);
-        if (n.startsWith(subnet)) return true;
+        // FIX: null-guarded. subnet is null whenever network.subnet wasn't
+        // configured (see loadProperties). Without this guard, the first
+        // packet processed after a missing/failed config load throws an
+        // NPE inside every detector that calls isInternal() — a startup
+        // config problem should degrade to "nothing is internal" (safe,
+        // loud in the logs already) rather than crash the detection path.
+        if (subnet != null && n.startsWith(subnet)) return true;
         for (String dockerSubnet : dockerSubnets) {
             if (n.startsWith(dockerSubnet)) return true;
         }
@@ -285,7 +319,7 @@ public class NetworkWhitelist {
             || n.startsWith("224.") || n.startsWith("239.")
             || n.equals("255.255.255.255") || n.startsWith("169.254.");
     }
-    
+
 
     private String normalize(String ip) {
         return ip.trim()
@@ -311,12 +345,7 @@ public class NetworkWhitelist {
 
     public String  getGateway()        { return gateway; }
     public String  getSubnet()         { return subnet; }
-
-    // FIX: was hardcoded `return new ArrayList<>();` — always empty regardless
-    // of configuration. Now backed by the real internalServers set, populated
-    // from server.N properties in loadProperties().
     public List<String> getInternalServers() { return new ArrayList<>(internalServers); }
-
     public int     getWorkStartHour()  { return workStart; }
     public int     getWorkEndHour()    { return workEnd; }
     public String  getWorkTimezone()   { return timezone; }
@@ -325,44 +354,39 @@ public class NetworkWhitelist {
     public int     getWorkEnd()        { return workEnd; }
     public void    addTrusted(String ip, Object ignored) { addTrustedIp(ip); }
 
-    /**
-     * True if this destination is a known-legitimate source of regular,
-     * fixed-interval traffic (this engine's own backend, a monitoring or
-     * license server) and should be exempt from BeaconingDetector.
-     *
-     * FIX: was a stub returning false unconditionally — every destination
-     * used to be a beaconing candidate, including this engine's own
-     * scheduled whitelist-refresh traffic to its backend.
-     */
     public boolean isTrustedBeaconDestination(String dstIP) {
         return dstIP != null && beaconTrustedDestinations.contains(normalize(dstIP));
     }
 
-    /**
-     * Backed by the same server.N properties as getInternalServers().
-     *
-     * FIX: was a stub returning false unconditionally — DataExfiltrationDetector
-     * always labeled the destination "(dynamic/DHCP device)" even when it was
-     * actually another known static server, because this always said no.
-     */
     public boolean isKnownServer(String srcIP) {
         return srcIP != null && internalServers.contains(normalize(srcIP));
     }
 
     /**
-     * True if this IP is a known, authorized internal security tool
-     * (vulnerability scanner, compliance scan runner). Intentionally
-     * separate from isTrusted() — a scanner should be exempt from
-     * scan/sweep detection specifically, without being exempt from every
-     * other detector (e.g. it should still trip AfterHoursDetector if
-     * someone runs it at 3am without authorization).
-     *
-     * FIX: was a stub returning false unconditionally — NmapScanDetector's
-     * and HttpAnomalyDetector's trusted-scanner checks always failed, so
-     * your own vulnerability scanner kept firing CRITICAL port-sweep and
-     * scanner-User-Agent alerts against itself.
+     * True if this IP is authorized to do things that structurally look
+     * like an attack: port sweeps, distributed slow scans, scanner
+     * User-Agents, or multi-host admin-port connections. Covers both
+     * vulnerability scanners AND configuration-management/automation
+     * control nodes (Ansible, Chef, Puppet, SaltStack) — both are
+     * legitimate, both look identical to an attacker to a behavior-based
+     * detector.
      */
     public boolean isTrustedScanner(String srcIP) {
         return srcIP != null && trustedScanners.contains(normalize(srcIP));
     }
+
+    /**
+     * True if this MAC is a configured, legitimate DHCP server.
+     *
+     * FIX: replaces RogueDHCPDetector's old auto-learn behavior, which
+     * trusted whichever DHCP server answered first after startup — a real
+     * bypass, since DHCP-spoofing attacks work by racing the legitimate
+     * server. There is no implicit trust path anymore: if this set is
+     * empty, RogueDHCPDetector alerts on every DHCP server response,
+     * including your real one, until network.dhcp.trusted.servers is set.
+     */
+    public boolean isTrustedDhcpServer(String mac) {
+        return mac != null && trustedDhcpServerMacs.contains(mac.toLowerCase().trim());
+    }
+
 }
