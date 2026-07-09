@@ -5,6 +5,7 @@ import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
+import com.ids.network.NetworkWhitelist;
 
 import java.util.Map;
 import java.util.Set;
@@ -54,13 +55,12 @@ public class DataStagingDetector implements Detector {
     private final Map<String, Map<Integer, Long>> portsOnTarget = new ConcurrentHashMap<>();
 
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
-
     private final AlertManager alertManager;
-    private final String       localSubnet;
+    private final NetworkWhitelist whitelist;
 
-    public DataStagingDetector(AlertManager alertManager, String localSubnet) {
+    public DataStagingDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
-        this.localSubnet  = localSubnet;
+        this.whitelist = whitelist;
     }
 
     public void analyze(PacketContext ctx) {
@@ -77,7 +77,7 @@ public class DataStagingDetector implements Detector {
         if (srcIP == null || dstIP == null) return;
 
         // Only care about internal → internal on data ports
-        if (!isInternal(srcIP) || !isInternal(dstIP)) return;
+        if (!whitelist.isInternal(srcIP) || !whitelist.isInternal(dstIP)) return;
         if (!DATA_PORTS.contains(port)) return;
 
         //SOURCE SWEEP
@@ -138,15 +138,6 @@ public class DataStagingDetector implements Detector {
                 ports.clear();
             }
         }
-    }
-
-    private boolean isInternal(String ip) {
-        if (ip == null) return false;
-        return ip.startsWith(localSubnet)
-            || ip.startsWith("10.")
-            || ip.startsWith("172.16.")
-            || ip.startsWith("172.31.")
-            || ip.startsWith("192.168.");
     }
 
     public void cleanup() {

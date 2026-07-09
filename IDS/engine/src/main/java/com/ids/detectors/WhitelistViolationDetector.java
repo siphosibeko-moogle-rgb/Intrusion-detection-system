@@ -15,9 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class WhitelistViolationDetector implements Detector {
 
-    private final AlertManager     alertManager;
-    private final NetworkWhitelist whitelist;
-    private final String           localSubnetPrefix; // e.g. "192.168.8."
+	private final AlertManager alertManager;
+	private final NetworkWhitelist whitelist;
 
     private final Map<String, Long> lastAlertTime = new ConcurrentHashMap<>();
     private static final long COOLDOWN_MS  = 60_000L;
@@ -30,11 +29,10 @@ public class WhitelistViolationDetector implements Detector {
     private static final long WARMUP_MS = 90_000L;
 
     public WhitelistViolationDetector(AlertManager alertManager,
-                                      NetworkWhitelist whitelist,
-                                      String localSubnetPrefix) {
+                                      NetworkWhitelist whitelist ) {
         this.alertManager      = alertManager;
         this.whitelist         = whitelist;
-        this.localSubnetPrefix = localSubnetPrefix;
+        
     }
 
     public void analyze(PacketContext ctx) {
@@ -49,9 +47,9 @@ public class WhitelistViolationDetector implements Detector {
         if (isSystemAddress(srcIP)) return;
         if (srcMac != null && srcMac.equalsIgnoreCase("ff:ff:ff:ff:ff:ff")) return;
 
-        boolean trusted     = whitelist.isTrusted(srcIP);
+        boolean trusted = whitelist.isTrusted(srcIP);
         boolean approvedOrg = whitelist.isApprovedOrg(srcIP);
-        boolean isInternal  = srcIP.startsWith(localSubnetPrefix);
+        boolean isInternal = whitelist.isInternal(srcIP);
         boolean isExternal  = !isRFC1918(srcIP); // public internet IP
         long    now         = System.currentTimeMillis();
         boolean warmedUp    = (now - startTime) > WARMUP_MS;
@@ -128,12 +126,17 @@ public class WhitelistViolationDetector implements Detector {
             String srcMac = arp.getHeader().getSrcHardwareAddr().toString();
 
             if (isSystemAddress(srcIP)) return;
-            if (whitelist.isTrusted(srcIP, srcMac)) return; // ← THIS WAS MISSING
+            if (whitelist.isTrusted(srcIP, srcMac)) return;
 
             long now = System.currentTimeMillis();
             if ((now - startTime) <= WARMUP_MS) return;
 
-            boolean isInternal = srcIP.startsWith(localSubnetPrefix);
+            // `srcIP.startsWith(srcIP)` — a tautology that's always true
+            // for every address on every interface (ARP has no subnet filtering
+            // at all as a result). Use the same isInternal() check analyze() uses,
+            // so ARP alerts respect network.subnet and network.docker.subnets
+            // the same way IP-based alerts do.
+            boolean isInternal = whitelist.isInternal(srcIP);
             if (isInternal && shouldAlert("ARP:" + srcIP, now)) {
                 alertManager.raise(new ThreatEvent(
                     ThreatType.UNKNOWN_IP, srcIP, srcMac,

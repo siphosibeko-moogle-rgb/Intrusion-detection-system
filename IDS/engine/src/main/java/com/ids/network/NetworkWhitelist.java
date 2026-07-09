@@ -343,9 +343,12 @@ public class NetworkWhitelist {
             }, intervalSeconds, intervalSeconds, java.util.concurrent.TimeUnit.SECONDS);
     }
 
-    public String  getGateway()        { return gateway; }
-    public String  getSubnet()         { return subnet; }
-    public List<String> getInternalServers() { return new ArrayList<>(internalServers); }
+    public String  getGateway()        {
+    	return gateway; }
+    public String  getSubnet()         { 
+    	return subnet; }
+    public List<String> getInternalServers() { 
+    	return new ArrayList<>(internalServers); }
     public int     getWorkStartHour()  { return workStart; }
     public int     getWorkEndHour()    { return workEnd; }
     public String  getWorkTimezone()   { return timezone; }

@@ -19,8 +19,9 @@ public class DnsTunnelingDetector implements Detector {
     private static final int DNS_PORT = 53;
     private static final int FLOOD_THRESHOLD = 20;
     private static final int UNIQUE_SUB_THRESH = 15;
-    private static final double HIGH_ENTROPY = 3.8;
-    private static final long COOLDOWN_MS = 10_000L; // increased
+    private static final double HIGH_ENTROPY = 4.3;
+    private static final long COOLDOWN_MS = 10_000L;
+    private static final int AMPLIFICATION_SIZE_THRESHOLD = 512;
 
     private final Map<String, PacketRecord> records = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
@@ -68,7 +69,16 @@ public class DnsTunnelingDetector implements Detector {
 
             rec.addDnsSubdomain(domain);
 
-            double entropy = shannonEntropy(domain);
+            // Measure entropy on the leftmost label only (e.g. "signaler-pa"
+            // in "signaler-pa.clients6.google.com"), not the full FQDN.
+            // Attackers stuff encoded data into the subdomain they control;
+            // the domain/TLD portion is always ordinary English/ASCII and
+            // dilutes a real tunnel's entropy score toward normal-looking
+            // values when measured over the whole string — which is exactly
+            // why ordinary Google/Mozilla telemetry hostnames were tripping
+            // this at the old 3.8 threshold.
+            String leftmostLabel = firstLabel(domain);
+            double entropy = shannonEntropy(leftmostLabel);
 
             // Long + high entropy = suspicious
             if (domain.length() > 40 || entropy > HIGH_ENTROPY) {
@@ -106,17 +116,27 @@ public class DnsTunnelingDetector implements Detector {
 
 
         // DNS AMPLIFICATION (basic)
-        if (ctx.getSrcPort() == DNS_PORT && windowCount < 5) {
+     // DNS AMPLIFICATION — heuristic: a response over the classic
+     // 512-byte non-EDNS UDP ceiling usually means a large record type
+     // (TXT/ANY/DNSSEC) was requested, which is the standard amplification
+     // vector. This is a size heuristic, not full query/response
+     // correlation by transaction ID — that's a reasonable next step if
+     // this still shows false positives, but isn't needed to fix the
+     // "fires on every reply" bug the old windowCount check had.
+     if (ctx.getSrcPort() == DNS_PORT
+             && ctx.isUdp()
+             && ctx.getPayloadLength() > AMPLIFICATION_SIZE_THRESHOLD) {
 
-            alert(ThreatType.DNS_AMPLIFICATION,
-                    key + ":AMP",
-                    now,
-                    srcIP, srcMac, dstIP, dstMac,
-                    "Possible DNS amplification response",
-                    Severity.MEDIUM,
-                    1, 0,
-                    ctx.getProtocol(), DNS_PORT);
-        }
+         alert(ThreatType.DNS_AMPLIFICATION,
+             key + ":AMP",
+             now,
+             srcIP, srcMac, dstIP, dstMac,
+             "Large DNS response (" + ctx.getPayloadLength()
+                 + " bytes) from " + srcIP + " — possible amplification source",
+             Severity.MEDIUM,
+             1, 0,
+             ctx.getProtocol(), DNS_PORT);
+     }
     }
 
     
@@ -195,6 +215,10 @@ public class DnsTunnelingDetector implements Detector {
                 count, winMs, details, severity,
                 proto, "DNS_QUERY", port
         ));
+    }
+    private String firstLabel(String domain) {
+        int dot = domain.indexOf('.');
+        return dot > 0 ? domain.substring(0, dot) : domain;
     }
 
     public void cleanup() {

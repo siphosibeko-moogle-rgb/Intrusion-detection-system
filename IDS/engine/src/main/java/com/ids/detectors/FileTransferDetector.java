@@ -5,6 +5,7 @@ import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
+import com.ids.network.NetworkWhitelist;
 
 import java.util.List;
 import java.util.Map;
@@ -45,21 +46,21 @@ public class FileTransferDetector implements Detector {
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
     private final AlertManager alertManager;
-    private final String       localSubnet;   // e.g. "192.168.1."
+    private final NetworkWhitelist whitelist;
     private final Set<String>  trustedServers; // IPs allowed to run FTP/SMB
 
     /**
      * @param alertManager   shared alert manager
-     * @param localSubnet    subnet prefix, e.g. "192.168.1."
      * @param list IPs that are allowed to use FTP/SMB (from whitelist)
+     * @param whitelist 
      */
     public FileTransferDetector(AlertManager alertManager,
-                                String localSubnet,
-                                List<String> list) {
-        this.alertManager   = alertManager;
-        this.localSubnet    = localSubnet;
-        this.trustedServers = new java.util.HashSet<>(list);
-    }
+            NetworkWhitelist whitelist,
+            List<String> list) {
+this.alertManager = alertManager;
+this.whitelist = whitelist;
+this.trustedServers = new java.util.HashSet<>(list);
+}
 
     public void analyze(PacketContext ctx, String tcpPayload) {
 
@@ -98,7 +99,7 @@ public class FileTransferDetector implements Detector {
 
         //SMB FROM OUTSIDE SUBNET
         if (dstPort == SMB_PORT || dstPort == NETBIOS_PORT) {
-            boolean srcExternal = !srcIP.startsWith(localSubnet);
+            boolean srcExternal = !whitelist.isInternal(srcIP);
             if (srcExternal) {
                 raise("SMB_EXT:" + srcIP, ThreatType.SMB_EXTERNAL,
                         srcIP, srcMac, dstIP, dstMac, now,

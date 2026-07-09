@@ -63,6 +63,20 @@ public class IDSEngine {
     // All capture threads push here; drain workers pop and process.
     private final BlockingQueue<Packet> packetQueue = new ArrayBlockingQueue<>(10_000);
 
+    // FIX: drain worker count used to be hardcoded to 2, regardless of how
+    // many CPU cores the box has or how many interfaces/detectors are in
+    // play. Every packet that passes the whitelist gate runs through ~15
+    // behavioral detectors synchronously inside process() — with only 2
+    // consumer threads, that's the actual throughput ceiling of the whole
+    // engine, not any individual detector. Sizing to the core count (minus
+    // 1, to leave headroom for capture threads + GC) lets the engine use
+    // the hardware it's actually running on. This is a starting point, not
+    // a tuned number — if you're still seeing drops in reportDrops() after
+    // this, the next lever is sharding the queue by srcIP so one hot flow
+    // can't starve the others, not just adding more threads.
+    private static final int DRAIN_WORKERS =
+            Math.max(2, Runtime.getRuntime().availableProcessors() - 1);
+
     // Use CachedThreadPool to scale to N capture threads + M drain
     // threads without knowing N at startup. Threads are long-lived, not churned.
     private final ExecutorService workers = Executors.newCachedThreadPool(r -> {
@@ -108,7 +122,7 @@ public class IDSEngine {
 
         icmpDetector            = new IcmpAbuseDetector(alertManager);
         nmapDetector            = new NmapScanDetector(alertManager, whitelist);
-        whitelistDetector       = new WhitelistViolationDetector(alertManager, whitelist, subnet);
+        whitelistDetector = new WhitelistViolationDetector(alertManager, whitelist);
         arpDetector             = new ArpSpoofingDetector(alertManager, whitelist.getGateway());
         dnsDetector             = new DnsTunnelingDetector(alertManager);
         exfilDetector           = new DataExfiltrationDetector(alertManager, whitelist);
@@ -117,13 +131,24 @@ public class IDSEngine {
                                           whitelist.getWorkTimezone(), whitelist.isWeekendAlert());
         bruteForceDetector      = new BruteForceDetector(alertManager);
         beaconingDetector       = new BeaconingDetector(alertManager, whitelist);
+        // was new LateralMovementDetector(alertManager, subnet) — subnet
+        // is a leftover from before this detector added whitelist.isInternal()
+        // and isTrustedScanner() checks; constructor takes the whitelist now.
         lateralMovementDetector = new LateralMovementDetector(alertManager, whitelist);
         httpAnomalyDetector     = new HttpAnomalyDetector(alertManager, whitelist);
+        // new RogueDHCPDetector(alertManager, whitelist.getGateway()) —
+        // getGateway() is leftover from the old auto-learn-first-server logic,
+        // which was a real bypass (an attacker racing your real DHCP server on
+        // startup could get permanently trusted). Replaced with an explicit
+        // whitelist.isTrustedDhcpServer(mac) allowlist check inside the detector.
         rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist);
-        fileTransferDetector    = new FileTransferDetector(alertManager, subnet,
-                                          whitelist.getInternalServers());
-        dataStagingDetector     = new DataStagingDetector(alertManager, subnet);
+        fileTransferDetector = new FileTransferDetector(alertManager, whitelist,
+        	    whitelist.getInternalServers());
+        	dataStagingDetector = new DataStagingDetector(alertManager, whitelist);
         ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, whitelist);
+        // FIX: all three below gained whitelist.isTrustedScanner() exemptions
+        // (so your own vuln scanner / sqlmap / automation doesn't page you)
+        // but were still being constructed with alertManager only.
         lowSlowDetector         = new LowAndSlowScanDetector(alertManager, whitelist);
         portKnockingDetector    = new PortKnockingDetector(alertManager, whitelist);
         sqlInjectionDetector    = new SqlInjectionDetector(alertManager, whitelist);
@@ -174,11 +199,12 @@ public class IDSEngine {
         }
         System.out.println("\n[IDS] LIVE CAPTURE STARTED\n");
 
-        
-        workers.submit(this::drainQueue);
-        workers.submit(this::drainQueue);
+        System.out.println("[IDS] Starting " + DRAIN_WORKERS + " drain worker(s) ("
+            + Runtime.getRuntime().availableProcessors() + " CPU cores detected)");
+        for (int i = 0; i < DRAIN_WORKERS; i++) {
+            workers.submit(this::drainQueue);
+        }
 
-       
         for (PcapHandle handle : captureHandles) {
             workers.submit(() -> runCaptureLoop(handle));
         }
@@ -302,11 +328,25 @@ public class IDSEngine {
         }
     }
 
+    // FIX: previously this only printed when drops had *already* happened —
+    // by definition too late, since a drop means a packet a detector never
+    // saw. queue.size() costs nothing to check on a 1-minute schedule and
+    // shows backpressure building (queue consistently >50-70% full) before
+    // it turns into drops, so you can react ahead of time instead of after.
     private void reportDrops() {
         long dropped = droppedPackets.getAndSet(0);
+        int queueDepth = packetQueue.size();
+        int queueCapacity = queueDepth + packetQueue.remainingCapacity();
+
         if (dropped > 0) {
             System.err.println("[ENGINE] Dropped " + dropped
-                + " packets in the last minute — consider tuning queue size or worker count.");
+                + " packets in the last minute — queue was full (depth "
+                + queueDepth + "/" + queueCapacity + "). Consider raising "
+                + "DRAIN_WORKERS or the queue capacity.");
+        } else if (queueDepth > queueCapacity * 0.5) {
+            System.out.println("[ENGINE] Queue depth " + queueDepth + "/" + queueCapacity
+                + " (" + (queueDepth * 100 / queueCapacity) + "% full) — no drops yet, "
+                + "but worth watching.");
         }
     }
 

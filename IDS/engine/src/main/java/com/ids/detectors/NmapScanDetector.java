@@ -65,6 +65,14 @@ public class NmapScanDetector implements Detector {
     // for free by waiting between packets.
     private static final long STALE_EVICTION_MS = 300_000L;
 
+ // Ports a server replies FROM, not scans FROM. A DNS/DHCP/NTP server
+ // answering many clients touches a different destination port on
+ // every reply (the client's ephemeral port) — structurally identical
+ // to a UDP port scan unless replies from these known service ports
+ // are excluded from the scan-probe count.
+ private static final java.util.Set<Integer> SERVICE_REPLY_PORTS =
+     java.util.Set.of(53, 67, 68, 123, 137, 138, 5353);
+
     private final Map<String, PacketRecord> records = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
@@ -158,8 +166,8 @@ public class NmapScanDetector implements Detector {
 
         }
 
-        // UDP SCAN
-        if (ctx.isUdp()) {
+     // UDP SCAN
+        if (ctx.isUdp() && !SERVICE_REPLY_PORTS.contains(ctx.getSrcPort())) {
 
             int port = ctx.getDstPort();
 
