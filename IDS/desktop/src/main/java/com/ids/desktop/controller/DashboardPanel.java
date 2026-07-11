@@ -1,0 +1,634 @@
+package com.ids.desktop.controller;
+
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ids.desktop.service.BackendClient;
+
+import javafx.application.Platform;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.chart.CategoryAxis;
+import javafx.scene.chart.LineChart;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.PieChart;
+import javafx.scene.chart.XYChart;
+import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TableCell;
+import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableView;
+import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
+
+/**
+ * DashboardPanel — the SOC-style overview screen (Dashboard tab).
+ *
+ * ARCHITECTURE NOTE
+ * ------------------
+ * Same pattern as every other panel in this app (CaseDetailPanel,
+ * AlertGroupsPanel, IpInvestigationPanel): a plain VBox that MainController
+ * drops into a tab. No FXML for the internals — built in code, matching
+ * how those panels work.
+ *
+ * Data comes from GET /api/dashboard/summary and GET /api/dashboard/health
+ * (DashboardController on the backend). We parse JsonNode directly instead
+ * of adding new model classes — same shortcut CaseDetailPanel already uses
+ * for its Overview/Notes tabs. Two small local row classes (DashAlertRow,
+ * DashCaseRow) exist only to feed TableView columns; they are not part of
+ * the app's shared model package on purpose — they're throwaway view rows,
+ * reusing AlertItem/CaseItem would force a mismatch (those classes carry
+ * fields this JSON doesn't have).
+ *
+ * THREADING
+ * ---------
+ * One ScheduledExecutorService (daemon thread "ids-dashboard") polls the
+ * backend every 5 seconds. HTTP calls happen on that thread; every UI
+ * mutation is wrapped in Platform.runLater(). This mirrors DataLoader's
+ * pattern used by MainController — the FX thread is never blocked.
+ *
+ * LIFECYCLE
+ * ---------
+ * MainController calls start() once logged in, and stop() from its own
+ * shutdown() method (same place it already stops the live feed socket).
+ * Polling only needs to run while this tab could plausibly be visible;
+ * for simplicity (per the "keep it simple" brief) it runs continuously
+ * rather than pausing when another tab is selected. At 1 request/5s this
+ * is not meaningful load — revisit only if that changes.
+ */
+public class DashboardPanel extends VBox {
+
+	private static final String BG_ROOT   = Theme.BG_ROOT;
+	private static final String BG_CARD   = Theme.BG_CARD;
+	private static final String BORDER    = Theme.BORDER;
+	private static final String TEXT_MAIN = Theme.TEXT_MAIN;
+	private static final String TEXT_SUB  = Theme.TEXT_SUB;
+
+	private static final String COLOR_CRITICAL = Theme.SEVERITY_CRITICAL;
+	private static final String COLOR_HIGH     = Theme.SEVERITY_HIGH;
+	private static final String COLOR_MEDIUM   = Theme.SEVERITY_MEDIUM;
+	private static final String COLOR_LOW      = Theme.SEVERITY_LOW;   // now blue, not green — see Theme.java doc
+	private static final String COLOR_OK       = Theme.STATUS_OK;
+	private static final String COLOR_WARN     = Theme.STATUS_WARN;
+	private static final String COLOR_ERROR    = Theme.STATUS_ERROR;
+	private static final String COLOR_UNKNOWN  = Theme.STATUS_UNKNOWN;
+
+    private static final DateTimeFormatter TIME_FMT =
+            DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private BackendClient backend;
+
+    private ScheduledExecutorService scheduler;
+
+    // ── Stat cards ──────────────────────────────────────────────────────
+    private Label lblActiveAlerts, lblCriticalThreats, lblOpenCases, lblMonitoredHosts;
+    private Label lblOpenCasesSub;
+
+    // ── Charts ──────────────────────────────────────────────────────────
+    private LineChart<String, Number> activityChart;
+    private XYChart.Series<String, Number> seriesTotal;
+    private XYChart.Series<String, Number> seriesCritical;
+    private PieChart severityChart;
+
+    // ── Tables ──────────────────────────────────────────────────────────
+    private TableView<ThreatActorRow> threatActorsTable;
+    private final ObservableList<ThreatActorRow> threatActors = FXCollections.observableArrayList();
+
+    private TableView<DashCaseRow> recentCasesTable;
+    private final ObservableList<DashCaseRow> recentCases = FXCollections.observableArrayList();
+
+    // ── System health widget ───────────────────────────────────────────
+    private final Map<String, Circle> healthDots = new LinkedHashMap<>();
+    private final Map<String, Label> healthLabels = new LinkedHashMap<>();
+
+    private Label lblLastUpdated;
+
+    public DashboardPanel(BackendClient backend) {
+        this.backend = backend;
+        setStyle("-fx-background-color: " + BG_ROOT + ";");
+        setSpacing(16);
+        setPadding(new Insets(16));
+        buildUI();
+    }
+
+    public void setBackend(BackendClient backend) {
+        this.backend = backend;
+    }
+
+    // ── LIFECYCLE ───────────────────────────────────────────────────────
+
+    /** Starts the 5-second polling loop. Safe to call more than once (restarts). */
+    public void start() {
+        stop(); // guard against double-start leaking a thread
+        scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "ids-dashboard");
+            t.setDaemon(true);
+            return t;
+        });
+        scheduler.scheduleWithFixedDelay(this::refresh, 0, 5, TimeUnit.SECONDS);
+    }
+
+    /** Stops polling. Call this from MainController.shutdown(). */
+    public void stop() {
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+            scheduler = null;
+        }
+    }
+
+    // ── UI CONSTRUCTION ─────────────────────────────────────────────────
+
+    private void buildUI() {
+        ScrollPane scroll = new ScrollPane();
+        scroll.setFitToWidth(true);
+        scroll.setStyle("-fx-background: " + BG_ROOT + "; -fx-background-color: " + BG_ROOT + ";");
+
+        VBox content = new VBox(16);
+        content.setPadding(new Insets(4));
+
+        content.getChildren().addAll(
+                buildStatCardsRow(),
+                buildChartsRow(),
+                buildAlertsAndHealthRow(),
+                buildRecentCasesSection()
+        );
+
+        lblLastUpdated = new Label("Waiting for first refresh…");
+        lblLastUpdated.setStyle("-fx-text-fill: " + TEXT_SUB + "; -fx-font-size: 10;");
+
+        scroll.setContent(content);
+        VBox.setVgrow(scroll, Priority.ALWAYS);
+
+        getChildren().addAll(scroll, lblLastUpdated);
+    }
+
+    // ── Row 1: stat cards ───────────────────────────────────────────────
+
+    private HBox buildStatCardsRow() {
+        HBox row = new HBox(16);
+
+        VBox cardAlerts = statCard("Active Alerts", "0", "#1f6feb");
+        lblActiveAlerts = (Label) ((VBox) cardAlerts.getChildren().get(1)).getChildren().get(0);
+
+        VBox cardCritical = statCard("Critical Threats", "0", COLOR_CRITICAL);
+        lblCriticalThreats = (Label) ((VBox) cardCritical.getChildren().get(1)).getChildren().get(0);
+
+        VBox cardCases = statCard("Open Cases", "0", "#8957e5");
+        VBox cardCasesTextBox = (VBox) cardCases.getChildren().get(1);
+        lblOpenCases = (Label) cardCasesTextBox.getChildren().get(0);
+        lblOpenCasesSub = new Label("0 investigating");
+        lblOpenCasesSub.setStyle("-fx-text-fill: " + TEXT_SUB + "; -fx-font-size: 11;");
+        cardCasesTextBox.getChildren().add(lblOpenCasesSub);
+
+        VBox cardHosts = statCard("Monitored Hosts", "0", "#22c55e");
+        lblMonitoredHosts = (Label) ((VBox) cardHosts.getChildren().get(1)).getChildren().get(0);
+
+        for (VBox c : List.of(cardAlerts, cardCritical, cardCases, cardHosts)) {
+            HBox.setHgrow(c, Priority.ALWAYS);
+        }
+
+        row.getChildren().addAll(cardAlerts, cardCritical, cardCases, cardHosts);
+        return row;
+    }
+
+    /** Builds a card: [colored accent bar+icon | VBox(bigNumber, title)]. */
+    private VBox statCard(String title, String initialValue, String accentColor) {
+        VBox card = new VBox();
+        card.setStyle("-fx-background-color: " + BG_CARD + "; -fx-border-color: " + BORDER +
+                "; -fx-border-width: 1; -fx-background-radius: 8; -fx-border-radius: 8;");
+        card.setPadding(new Insets(14));
+        card.setSpacing(4);
+        card.setMinWidth(180);
+
+        Region accent = new Region();
+        accent.setPrefHeight(3);
+        accent.setStyle("-fx-background-color: " + accentColor + "; -fx-background-radius: 2;");
+
+        Label big = new Label(initialValue);
+        big.setStyle("-fx-text-fill: " + TEXT_MAIN + "; -fx-font-size: 26; -fx-font-weight: bold;");
+
+        Label sub = new Label(title);
+        sub.setStyle("-fx-text-fill: " + TEXT_SUB + "; -fx-font-size: 12;");
+
+        VBox textBox = new VBox(2, big, sub);
+        card.getChildren().addAll(accent, textBox);
+        card.setEffect(Theme.cardShadow());
+        return card;
+    }
+
+    // ── Row 2: activity line chart + severity donut ────────────────────
+
+    private HBox buildChartsRow() {
+        HBox row = new HBox(16);
+
+        // Activity line chart
+        VBox activityBox = panelContainer("Alert Activity (Last Hour)");
+        CategoryAxis xAxis = new CategoryAxis();
+        NumberAxis yAxis = new NumberAxis();
+        xAxis.setTickLabelFill(Color.web(TEXT_SUB));
+        yAxis.setTickLabelFill(Color.web(TEXT_SUB));
+        activityChart = new LineChart<>(xAxis, yAxis);
+        activityChart.setAnimated(false);
+        activityChart.setLegendVisible(true);
+        activityChart.setStyle("-fx-background-color: " + BG_CARD + ";");
+        activityChart.setCreateSymbols(false);
+        activityChart.setPrefHeight(260);
+
+        seriesTotal = new XYChart.Series<>();
+        seriesTotal.setName("Alerts");
+        seriesCritical = new XYChart.Series<>();
+        seriesCritical.setName("Critical");
+        activityChart.getData().addAll(seriesTotal, seriesCritical);
+        activityBox.getChildren().add(activityChart);
+        HBox.setHgrow(activityBox, Priority.ALWAYS);
+
+        // Severity donut
+        VBox severityBox = panelContainer("Alert Severity Distribution");
+        severityChart = new PieChart();
+        severityChart.setLegendVisible(true);
+        severityChart.setLabelsVisible(true);
+        severityChart.setStyle("-fx-background-color: " + BG_CARD + ";");
+        severityChart.setPrefHeight(260);
+        severityChart.setPrefWidth(280);
+        severityBox.getChildren().add(severityChart);
+
+        row.getChildren().addAll(activityBox, severityBox);
+        return row;
+    }
+
+    // ── Row 3: recent alerts table + system health widget ──────────────
+
+    
+    
+
+    private VBox buildHealthWidget() {
+        VBox box = new VBox(8);
+        box.setPadding(new Insets(4, 0, 0, 0));
+
+        addHealthRow(box, "packetCapture", "Packet Capture");
+        addHealthRow(box, "backendApi", "Backend API");
+        addHealthRow(box, "database", "Database");
+        addHealthRow(box, "liveFeed", "Live Feed");
+        addHealthRow(box, "cpu", "CPU Usage");
+        addHealthRow(box, "ram", "RAM Usage");
+        addHealthRow(box, "disk", "Disk Usage");
+
+        return box;
+    }
+
+    private void addHealthRow(VBox box, String key, String label) {
+        Circle dot = new Circle(5, Color.web(COLOR_UNKNOWN));
+        Label lbl = new Label(label);
+        lbl.setStyle("-fx-text-fill: " + TEXT_MAIN + "; -fx-font-size: 12;");
+
+        HBox row = new HBox(8, dot, lbl);
+        row.setAlignment(Pos.CENTER_LEFT);
+
+        healthDots.put(key, dot);
+        healthLabels.put(key, lbl);
+        box.getChildren().add(row);
+    }
+
+    // ── Row 4: recent investigations ────────────────────────────────────
+
+    private VBox buildRecentCasesSection() {
+        VBox box = panelContainer("Recent Investigations");
+        recentCasesTable = buildRecentCasesTable();
+        recentCasesTable.setPrefHeight(200);
+        box.getChildren().add(recentCasesTable);
+        return box;
+    }
+
+    private TableView<DashCaseRow> buildRecentCasesTable() {
+        TableView<DashCaseRow> tv = new TableView<>();
+        tv.setStyle("-fx-background-color: " + BG_CARD + ";");
+        tv.setItems(recentCases);
+        tv.setPlaceholder(new Label("No cases yet."));
+
+        TableColumn<DashCaseRow, String> colNum = new TableColumn<>("Case #");
+        colNum.setCellValueFactory(new PropertyValueFactory<>("caseNumber"));
+        colNum.setPrefWidth(110);
+
+        TableColumn<DashCaseRow, String> colTitle = new TableColumn<>("Title");
+        colTitle.setCellValueFactory(new PropertyValueFactory<>("title"));
+        colTitle.setPrefWidth(220);
+
+        TableColumn<DashCaseRow, String> colPriority = new TableColumn<>("Priority");
+        colPriority.setCellValueFactory(new PropertyValueFactory<>("priority"));
+        colPriority.setPrefWidth(90);
+
+        TableColumn<DashCaseRow, String> colStatus = new TableColumn<>("Status");
+        colStatus.setCellValueFactory(new PropertyValueFactory<>("status"));
+        colStatus.setPrefWidth(110);
+
+        TableColumn<DashCaseRow, String> colOpened = new TableColumn<>("Opened");
+        colOpened.setCellValueFactory(new PropertyValueFactory<>("openedAt"));
+        colOpened.setPrefWidth(140);
+
+        TableColumn<DashCaseRow, String> colAssigned = new TableColumn<>("Assigned To");
+        colAssigned.setCellValueFactory(new PropertyValueFactory<>("assignedTo"));
+        colAssigned.setPrefWidth(110);
+
+        tv.getColumns().addAll(List.of(colNum, colTitle, colPriority, colStatus, colOpened, colAssigned));
+        return tv;
+    }
+
+    private VBox panelContainer(String title) {
+        VBox box = new VBox(10);
+        box.setStyle("-fx-background-color: " + BG_CARD + "; -fx-border-color: " + BORDER +
+                "; -fx-border-width: 1; -fx-background-radius: 8; -fx-border-radius: 8;");
+        box.setPadding(new Insets(12));
+
+        Label lbl = new Label(title);
+        lbl.setStyle("-fx-text-fill: " + TEXT_MAIN + "; -fx-font-size: 13; -fx-font-weight: bold;");
+        box.getChildren().add(lbl);
+        box.setEffect(Theme.cardShadow());
+        return box;
+    }
+
+    // ── DATA REFRESH (background thread) ────────────────────────────────
+
+    private void refresh() {
+        if (backend == null || !backend.isLoggedIn()) return;
+
+        try {
+            JsonNode summary = mapper.readTree(backend.getRaw("/api/dashboard/summary"));
+            JsonNode health = mapper.readTree(backend.getRaw("/api/dashboard/health"));
+            JsonNode actorsJson = mapper.readTree(backend.getRaw("/api/dashboard/threat-actors?limit=15"));
+            Platform.runLater(() -> {
+                applySummary(summary);
+                applyHealth(health);
+                applyThreatActors(actorsJson);
+                lblLastUpdated.setText("Last updated " +
+                        DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
+                                .format(Instant.now()));
+            });
+        } catch (Exception e) {
+            Platform.runLater(() ->
+                    lblLastUpdated.setText("Refresh failed: " + e.getMessage()));
+        }
+    }
+
+    private void applySummary(JsonNode s) {
+        lblActiveAlerts.setText(String.valueOf(s.path("activeAlerts").asLong(0)));
+        lblCriticalThreats.setText(String.valueOf(s.path("criticalThreats").asLong(0)));
+        lblOpenCases.setText(String.valueOf(s.path("openCases").asLong(0)));
+        lblOpenCasesSub.setText(s.path("investigatingCases").asLong(0) + " investigating");
+        lblMonitoredHosts.setText(String.valueOf(s.path("monitoredHosts").asLong(0)));
+
+        // Severity donut
+        JsonNode dist = s.path("severityDistribution");
+        ObservableList<PieChart.Data> pieData = FXCollections.observableArrayList(
+                new PieChart.Data("Critical", dist.path("CRITICAL").asLong(0)),
+                new PieChart.Data("High", dist.path("HIGH").asLong(0)),
+                new PieChart.Data("Medium", dist.path("MEDIUM").asLong(0)),
+                new PieChart.Data("Low", dist.path("LOW").asLong(0))
+        );
+        severityChart.setData(pieData);
+        // Colour the slices after they're laid out (JavaFX requires the node to exist first)
+        Platform.runLater(() -> {
+            colorSlice(pieData, 0, COLOR_CRITICAL);
+            colorSlice(pieData, 1, COLOR_HIGH);
+            colorSlice(pieData, 2, COLOR_MEDIUM);
+            colorSlice(pieData, 3, COLOR_LOW);
+        });
+
+        // Activity line chart
+        seriesTotal.getData().clear();
+        seriesCritical.getData().clear();
+        for (JsonNode point : s.path("activity")) {
+            String label = formatBucketTime(point.path("time").asText(""));
+            seriesTotal.getData().add(new XYChart.Data<>(label, point.path("total").asLong(0)));
+            seriesCritical.getData().add(new XYChart.Data<>(label, point.path("critical").asLong(0)));
+        }
+
+        
+
+        // Recent cases table
+        List<DashCaseRow> caseRows = new ArrayList<>();
+        for (JsonNode n : s.path("recentCases")) {
+            caseRows.add(new DashCaseRow(
+                    n.path("caseNumber").asText(""),
+                    n.path("title").asText(""),
+                    n.path("priority").asText(""),
+                    n.path("status").asText(""),
+                    formatBucketTime(n.path("openedAt").asText("")),
+                    n.path("assignedTo").asText("")
+            ));
+        }
+        recentCases.setAll(caseRows);
+    }
+
+    private void colorSlice(ObservableList<PieChart.Data> data, int index, String color) {
+        if (index < data.size() && data.get(index).getNode() != null) {
+            data.get(index).getNode().setStyle("-fx-pie-color: " + color + ";");
+        }
+    }
+
+    private String formatBucketTime(String isoTimestamp) {
+        if (isoTimestamp == null || isoTimestamp.isBlank()) return "";
+        try {
+            return TIME_FMT.format(Instant.parse(isoTimestamp));
+        } catch (Exception e) {
+            return isoTimestamp;
+        }
+    }
+
+    private void applyHealth(JsonNode h) {
+        setDot("packetCapture", h.path("packetCapture").path("status").asText("UNKNOWN"));
+        setDot("backendApi", h.path("backendApi").path("status").asText("UNKNOWN"));
+        setDot("database", h.path("database").path("status").asText("UNKNOWN"));
+        setDot("liveFeed", h.path("liveFeed").path("status").asText("UNKNOWN"));
+
+        setDotWithValue("cpu", h.path("cpu").path("status").asText("UNKNOWN"),
+                h.path("cpu").path("value").asDouble(-1), "CPU Usage");
+        setDotWithValue("ram", h.path("ram").path("status").asText("UNKNOWN"),
+                h.path("ram").path("value").asDouble(-1), "RAM Usage");
+        setDotWithValue("disk", h.path("disk").path("status").asText("UNKNOWN"),
+                h.path("disk").path("value").asDouble(-1), "Disk Usage");
+    }
+
+    private void setDot(String key, String status) {
+        Circle dot = healthDots.get(key);
+        if (dot != null) dot.setFill(Color.web(colorForStatus(status)));
+    }
+
+    private void setDotWithValue(String key, String status, double value, String baseLabel) {
+        setDot(key, status);
+        Label lbl = healthLabels.get(key);
+        if (lbl != null) {
+            lbl.setText(value >= 0 ? baseLabel + " " + Math.round(value) + "%" : baseLabel);
+        }
+    }
+
+    private String colorForStatus(String status) {
+        return switch (status.toUpperCase()) {
+            case "OK" -> COLOR_OK;
+            case "WARN" -> COLOR_WARN;
+            case "ERROR" -> COLOR_ERROR;
+            default -> COLOR_UNKNOWN;
+        };
+    }
+
+    public static class ThreatActorRow {
+        private final int rank;
+        private final String ip, topThreatType, lastSeen;
+        private final int threatScore, totalAlerts;
+
+        public ThreatActorRow(int rank, String ip, int threatScore, int totalAlerts,
+                               String topThreatType, String lastSeen) {
+            this.rank = rank;
+            this.ip = ip;
+            this.threatScore = threatScore;
+            this.totalAlerts = totalAlerts;
+            this.topThreatType = topThreatType;
+            this.lastSeen = lastSeen;
+        }
+
+        public int getRank() { return rank; }
+        public String getIp() { return ip; }
+        public int getThreatScore() { return threatScore; }
+        public int getTotalAlerts() { return totalAlerts; }
+        public String getTopThreatType() { return topThreatType; }
+        public String getLastSeen() { return lastSeen; }
+    }
+
+    public static class DashCaseRow {
+        private final String caseNumber, title, priority, status, openedAt, assignedTo;
+
+        public DashCaseRow(String caseNumber, String title, String priority,
+                            String status, String openedAt, String assignedTo) {
+            this.caseNumber = caseNumber;
+            this.title = title;
+            this.priority = priority;
+            this.status = status;
+            this.openedAt = openedAt;
+            this.assignedTo = assignedTo;
+        }
+
+        public String getCaseNumber() { return caseNumber; }
+        public String getTitle() { return title; }
+        public String getPriority() { return priority; }
+        public String getStatus() { return status; }
+        public String getOpenedAt() { return openedAt; }
+        public String getAssignedTo() { return assignedTo; }
+    }
+    private void applyThreatActors(JsonNode actorsNode) {
+        List<ThreatActorRow> rows = new ArrayList<>();
+        for (JsonNode n : actorsNode) {
+            rows.add(new ThreatActorRow(
+                n.path("rank").asInt(0),
+                n.path("ip").asText(""),
+                n.path("threatScore").asInt(0),
+                (int) n.path("totalAlerts").asLong(0),
+                n.path("topThreatType").asText(""),
+                formatBucketTime(n.path("lastSeen").asText(""))
+            ));
+        }
+        threatActors.setAll(rows);
+    }
+    private HBox buildAlertsAndHealthRow() {
+        HBox row = new HBox(16);
+
+        VBox actorsBox = panelContainer("Threat Actors");
+        threatActorsTable = buildThreatActorsTable();
+        threatActorsTable.setPrefHeight(260);
+        actorsBox.getChildren().add(threatActorsTable);
+        HBox.setHgrow(actorsBox, Priority.ALWAYS);
+
+        VBox healthBox = panelContainer("System Health");
+        healthBox.setMinWidth(230);
+        healthBox.setPrefWidth(230);
+        healthBox.getChildren().add(buildHealthWidget());
+
+        row.getChildren().addAll(actorsBox, healthBox);
+        return row;
+    }
+
+    private TableView<ThreatActorRow> buildThreatActorsTable() {
+        TableView<ThreatActorRow> tv = new TableView<>();
+        tv.setStyle("-fx-background-color: " + BG_CARD + ";");
+        tv.setItems(threatActors);
+        tv.setPlaceholder(new Label("No threat actors yet."));
+
+        TableColumn<ThreatActorRow, Number> colRank = new TableColumn<>("#");
+        colRank.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getRank()));
+        colRank.setPrefWidth(30);
+
+        TableColumn<ThreatActorRow, String> colIp = new TableColumn<>("IP");
+        colIp.setCellValueFactory(new PropertyValueFactory<>("ip"));
+        colIp.setPrefWidth(110);
+
+        TableColumn<ThreatActorRow, ThreatActorRow> colScore = new TableColumn<>("Threat Score");
+        colScore.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue()));
+        colScore.setCellFactory(c -> threatScoreCell());
+        colScore.setPrefWidth(150);
+
+        TableColumn<ThreatActorRow, Number> colAlerts = new TableColumn<>("Alerts");
+        colAlerts.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getTotalAlerts()));
+        colAlerts.setPrefWidth(70);
+
+        TableColumn<ThreatActorRow, String> colTopThreat = new TableColumn<>("Top Threat");
+        colTopThreat.setCellValueFactory(new PropertyValueFactory<>("topThreatType"));
+        colTopThreat.setPrefWidth(140);
+
+        TableColumn<ThreatActorRow, String> colLastSeen = new TableColumn<>("Last Seen");
+        colLastSeen.setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
+        colLastSeen.setPrefWidth(120);
+
+        tv.getColumns().addAll(List.of(colRank, colIp, colScore, colAlerts, colTopThreat, colLastSeen));
+        return tv;
+    }
+
+    private TableCell<ThreatActorRow, ThreatActorRow> threatScoreCell() {
+        return new TableCell<>() {
+            @Override
+            protected void updateItem(ThreatActorRow row, boolean empty) {
+                super.updateItem(row, empty);
+                if (empty || row == null) { setGraphic(null); return; }
+
+                int score = row.getThreatScore();
+                String color = score >= 75 ? COLOR_CRITICAL
+                              : score >= 50 ? COLOR_HIGH
+                              : score >= 25 ? COLOR_MEDIUM
+                              : COLOR_LOW;
+
+                Region track = new Region();
+                track.setPrefSize(80, 8);
+                track.setStyle("-fx-background-color: " + BORDER + "; -fx-background-radius: 4;");
+
+                Region fill = new Region();
+                fill.setPrefSize(80 * (score / 100.0), 8);
+                fill.setStyle("-fx-background-color: " + color + "; -fx-background-radius: 4;");
+
+                javafx.scene.layout.StackPane bar = new javafx.scene.layout.StackPane(track, fill);
+                bar.setAlignment(Pos.CENTER_LEFT);
+
+                Label val = new Label(String.valueOf(score));
+                val.setStyle("-fx-text-fill: " + TEXT_MAIN + "; -fx-font-size: 11; -fx-font-weight: bold;");
+
+                HBox box = new HBox(8, bar, val);
+                box.setAlignment(Pos.CENTER_LEFT);
+                setGraphic(box);
+            }
+        };
+    }
+}

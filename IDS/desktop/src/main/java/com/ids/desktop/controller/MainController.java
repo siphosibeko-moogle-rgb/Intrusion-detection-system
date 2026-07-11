@@ -1,9 +1,11 @@
 package com.ids.desktop.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+
 import com.ids.desktop.model.*;
 import com.ids.desktop.service.BackendClient;
 import com.ids.desktop.service.LiveFeedClient;
+import com.ids.desktop.service.HealthPoller;
 
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -37,10 +39,11 @@ public class MainController implements Initializable {
             DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
     // ── FXML BINDINGS ─────────────────────────────────────────────────────────
-    @FXML private Label  lblStatus;
-    @FXML private Circle dotLive;
+    
     @FXML private Label  lblUser;
-    @FXML private Label  lblTotal, lblCritical, lblHigh, lblMedium;
+    @FXML private TextField tfGlobalSearch;
+    @FXML private StackPane healthHost;
+    
 
     // Alerts tab
     @FXML private TextField        tfFilterIp, tfFilterMac, tfFilterType;
@@ -54,6 +57,8 @@ public class MainController implements Initializable {
 
     // Live feed
     @FXML private ListView<String> liveFeedList;
+    
+    @FXML private javafx.scene.layout.StackPane dashboardHost;
 
     // Attackers tab
     @FXML private TableView<AlertItem>            attackerTable;
@@ -114,7 +119,10 @@ public class MainController implements Initializable {
     private CaseDetailPanel   caseDetailPanel;
     private AlertGroupsPanel  alertGroupsPanel;
     private StackPane         sidePanelStack;     
-
+    private DashboardPanel dashboardPanel;
+    private HeaderHealthWidget healthWidget;
+    private HealthPoller healthPoller;
+    
     private final ObservableList<AlertItem>        allAlerts      = FXCollections.observableArrayList();
     private final ObservableList<AlertItem>        attackers      = FXCollections.observableArrayList();
     private final ObservableList<String>           liveEntries    = FXCollections.observableArrayList();
@@ -142,6 +150,9 @@ public class MainController implements Initializable {
 
         backend = new BackendClient(BACKEND_URL);
         dataLoader = new DataLoader(backend);
+        
+        dashboardPanel = new DashboardPanel(backend);
+        dashboardHost.getChildren().add(dashboardPanel);
 
         alertManager = new AlertTableManager(
                 alertTable,
@@ -192,7 +203,8 @@ public class MainController implements Initializable {
         tfCaseFilterStatus.textProperty().addListener((obs, oldVal, newVal) -> applyCaseFilter());
         tfCaseFilterIp.textProperty().addListener((obs, oldVal, newVal) -> applyCaseFilter());
 
-        setStatus("Not connected", false);
+        healthWidget = new HeaderHealthWidget();
+        healthHost.getChildren().add(healthWidget);
 
         // NEW: Replaces setupInvestigationPanel() and setupCaseDetailPanel()
         setupSidePanels();
@@ -337,7 +349,8 @@ public class MainController implements Initializable {
         String pass = pfPassword.getText();
         investigationPanel.setBackend(backend);
         caseDetailPanel.setBackend(backend);
-        alertGroupsPanel.setBackend(backend);   // NEW
+        alertGroupsPanel.setBackend(backend);
+        
         if (user.isEmpty() || pass.isEmpty()) {
             lblLoginStatus.setText("Username and password required");
             return;
@@ -350,16 +363,21 @@ public class MainController implements Initializable {
                 () -> {
                     lblLoginStatus.setText("Logged in as " + user);
                     lblUser.setText(user);
-                    setStatus("Connected", true);
+                    
                     investigationPanel.setBackend(backend);
                     caseDetailPanel.setBackend(backend);
+                    dashboardPanel.setBackend(backend);
+                    dashboardPanel.start();
+                    healthPoller = new HealthPoller(backend);
+                    healthPoller.addListener(healthWidget::update);
+                    healthPoller.start();
                     loadAllData();
                     startLiveFeed();
                     startPolling();
                 },
                 msg -> {
                     lblLoginStatus.setText("Connection failed: " + msg);
-                    setStatus("Not connected", false);
+                    
                 });
     }
 
@@ -492,20 +510,10 @@ public class MainController implements Initializable {
     // ── STATS ─────────────────────────────────────────────────────────────────
 
     private void updateStats(JsonNode stats) {
-        // Prefer live DB counts from the backend response.
-        // Fall back to counting from the in-memory list when stats is null
-        // (e.g. after a local removeById call).
-        if (stats != null && stats.has("total")) {
-            lblTotal   .setText(String.valueOf(stats.path("total")   .asInt()));
-            lblCritical.setText(String.valueOf(stats.path("critical").asInt()));
-            lblHigh    .setText(String.valueOf(stats.path("high")    .asInt()));
-            lblMedium  .setText(String.valueOf(stats.path("medium")  .asInt()));
-        } else {
-            lblTotal   .setText(String.valueOf(allAlerts.size()));
-            lblCritical.setText(String.valueOf(allAlerts.stream().filter(a -> "CRITICAL".equals(a.getSeverity())).count()));
-            lblHigh    .setText(String.valueOf(allAlerts.stream().filter(a -> "HIGH"    .equals(a.getSeverity())).count()));
-            lblMedium  .setText(String.valueOf(allAlerts.stream().filter(a -> "MEDIUM"  .equals(a.getSeverity())).count()));
-        }
+        // Severity counts are now shown only on the Dashboard tab's stat cards
+        // (DashboardPanel, driven by /api/dashboard/summary). The header no
+        // longer displays raw counts — this method is kept as a no-op landing
+        // point for the 3 existing call sites rather than touching all three.
     }
 
     // ── FXML ACTIONS ──────────────────────────────────────────────────────────
@@ -534,18 +542,15 @@ public class MainController implements Initializable {
     private void onDismissAlert() {
         AlertItem selected = alertTable.getSelectionModel().getSelectedItem();
         if (selected == null) return;
-        if (!isReady()) { setStatus("Not connected", false); return; }
+        if (!isReady()) { lblLoginStatus.setText("Not connected"); return; }
         if (selected.getId() <= 0) {
-            setStatus("Cannot dismiss: no database ID — press Refresh first.", false);
+            lblLoginStatus.setText("Cannot dismiss: no database ID — press Refresh first.");
             return;
         }
         dataLoader.submit("ids-dismiss-alert",
                 () -> backend.deleteAlertSummary(selected.getId()),
-                // The WS broadcast handles removing the row — no manual removeById here.
-                () -> setStatus("Alert dismissed from database.", false),
-                err -> setStatus("Dismiss failed: " + err, true));
-    }
-
+                () -> lblLoginStatus.setText("Alert dismissed from database."),
+                err -> lblLoginStatus.setText("Dismiss failed: " + err));}
     /**
      * Clears the dashboard TABLE VIEW only. The database is NOT touched.
      *
@@ -560,7 +565,7 @@ public class MainController implements Initializable {
         allAlerts.clear();            // clears Alerts tab   — DB untouched
         attackers.clear();            // clears Attackers tab — DB untouched
         alertManager.rebuildIndex();  // reset dedup index so next upsertAlert() works cleanly
-        setStatus("View cleared. Data preserved in database.", false);
+        lblLoginStatus.setText("View cleared. Data preserved in database.");
     }
 
     // ── WHITELIST ACTIONS ─────────────────────────────────────────────────────
@@ -575,7 +580,7 @@ public class MainController implements Initializable {
                     tfNewMyWlIp.clear(); tfNewMyWlMac.clear(); tfNewMyWlLabel.clear();
                     dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {});
                 },
-                msg -> setStatus("Add failed: " + msg, true));
+                msg -> lblLoginStatus.setText("Add failed: " + msg));
     }
 
     @FXML private void onDeleteMyWhitelist() {
@@ -584,7 +589,7 @@ public class MainController implements Initializable {
         dataLoader.submit("ids-del-wl",
                 () -> backend.deleteMyWhitelistEntry(sel.getId()),
                 () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> setStatus("Delete failed: " + msg, true));
+                msg -> lblLoginStatus.setText("Delete failed: " + msg));
     }
 
     @FXML private void onSelectAllFlagged() {
@@ -602,7 +607,7 @@ public class MainController implements Initializable {
                     backend.addMyWhitelistEntry(i.getIp(), i.getMac(), "Accepted from " + i.getThreatType()); },
                 () -> { cbSelectAllFlagged.setSelected(false);
                     dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}); },
-                msg -> setStatus("Accept failed: " + msg, true));
+                msg -> lblLoginStatus.setText("Accept failed: " + msg));
     }
 
     @FXML private void onRemoveFlagged() {
@@ -625,7 +630,7 @@ public class MainController implements Initializable {
                 () -> { for (var i : selected) backend.approveOrg(i.getId()); },
                 () -> { cbSelectAllPendingOrg.setSelected(false);
                     dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}); },
-                msg -> setStatus("Approve failed: " + msg, true));
+                msg -> lblLoginStatus.setText("Approve failed: " + msg));
     }
 
     @FXML private void onAcceptAllPendingOrgs() {
@@ -633,7 +638,7 @@ public class MainController implements Initializable {
         dataLoader.submit("ids-approve-all",
                 backend::approveAllOrgs,
                 () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> setStatus("Approve all failed: " + msg, true));
+                msg -> lblLoginStatus.setText("Approve all failed: " + msg));
     }
 
     @FXML private void onApproveAllOrgs() { onAcceptAllPendingOrgs(); }
@@ -644,7 +649,7 @@ public class MainController implements Initializable {
         dataLoader.submit("ids-del-pending",
                 () -> { for (var i : selected) backend.deleteOrgEntry(i.getId()); },
                 () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> setStatus("Remove failed: " + msg, true));
+                msg -> lblLoginStatus.setText("Remove failed: " + msg));
     }
 
     @FXML private void onRemoveAcceptedOrg() {
@@ -653,7 +658,7 @@ public class MainController implements Initializable {
         dataLoader.submit("ids-del-accepted",
                 () -> backend.deleteOrgEntry(sel.getId()),
                 () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> setStatus("Remove failed: " + msg, true));
+                msg -> lblLoginStatus.setText("Remove failed: " + msg));
     }
 
     // ── CASE ACTIONS ──────────────────────────────────────────────────────────
@@ -692,11 +697,7 @@ public class MainController implements Initializable {
 
     private boolean isReady() { return backend != null && backend.isLoggedIn(); }
 
-    private void setStatus(String msg, boolean connected) {
-        lblStatus.setText(msg);
-        if (dotLive != null)
-            dotLive.setFill(connected ? Color.web("#22c55e") : Color.web("#ef4444"));
-    }
+    
 
     private String fmtInstantSafe(String raw) {
         if (raw == null || raw.isBlank()) return FMT.format(Instant.now());
@@ -705,7 +706,7 @@ public class MainController implements Initializable {
     }
 
     private void handleSessionError(String prefix, String msg) {
-        setStatus(prefix + ": " + msg, false);
+        lblLoginStatus.setText(prefix + ": " + msg);
         if (msg != null && msg.contains("Session expired"))
             backend.invalidateSession();
     }
@@ -822,9 +823,11 @@ public class MainController implements Initializable {
 
     public void shutdown() {
         scheduler.shutdownNow();
+        if (dashboardPanel != null) dashboardPanel.stop();
         try { scheduler.awaitTermination(2, TimeUnit.SECONDS); }
         catch (InterruptedException ignored) {}
         if (wsFeed != null) try { wsFeed.close(); } catch (Exception ignored) {}
+        if (healthPoller != null) healthPoller.stop();
     }
     // ── INVESTIGATION PANEL ───────────────────────────────────────────────────
 

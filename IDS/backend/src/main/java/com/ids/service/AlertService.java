@@ -205,4 +205,31 @@ public class AlertService {
     public void clearSummaries() {
         summaryRepo.deleteAll();   // preserves raw alerts for forensic history
     }
+    /**
+     * Powers the dashboard Threat Actors table. Reuses buildIpProfile()'s
+     * scoring formula per IP rather than duplicating it in SQL — see class-
+     * level discussion in chat for the tradeoff (consistency over raw query
+     * count; fine at dashboard scale — 1 + N queries for N <= 15 attackers).
+     */
+    public List<Map<String, Object>> getThreatActors(int limit) {
+        List<Object[]> ranked = repo.topAttackers(); // already ORDER BY COUNT(a) DESC
+        List<Map<String, Object>> actors = new ArrayList<>();
+        int rank = 1;
+        for (Object[] row : ranked) {
+            if (actors.size() >= limit) break;
+            String ip = (String) row[0];
+            IpProfileDTO profile = buildIpProfile(ip);
+            if (profile == null) continue; // shouldn't happen, but don't let one bad row 500 the endpoint
+
+            Map<String, Object> actor = new LinkedHashMap<>();
+            actor.put("rank", rank++);
+            actor.put("ip", ip);
+            actor.put("threatScore", profile.threatScore());
+            actor.put("totalAlerts", profile.totalAlerts());
+            actor.put("topThreatType", profile.topThreatType());
+            actor.put("lastSeen", profile.lastSeen());
+            actors.add(actor);
+        }
+        return actors;
+    }
 }

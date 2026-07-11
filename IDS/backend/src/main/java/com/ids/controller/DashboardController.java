@@ -1,4 +1,4 @@
-package com.ids.desktop.controller;
+package com.ids.controller;
 
 import com.ids.model.Alert;
 import com.ids.model.AlertSummary;
@@ -7,6 +7,7 @@ import com.ids.repository.AlertSummaryRepository;
 import com.ids.service.AlertService;
 import com.ids.service.ForensicCaseService;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
@@ -60,7 +61,11 @@ public class DashboardController {
         this.caseService = caseService;
         this.jdbcTemplate = jdbcTemplate;
     }
-
+    @GetMapping("/threat-actors")
+    public ResponseEntity<?> threatActors(
+            @RequestParam(required = false, defaultValue = "15") int limit) {
+        return ResponseEntity.ok(alertService.getThreatActors(limit));
+    }
     // ── SUMMARY ─────────────────────────────────────────────────────────
 
     @GetMapping("/summary")

@@ -1,15 +1,5 @@
 package com.ids.desktop.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.ids.desktop.model.AlertGroupItem;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ids.desktop.model.AlertItem;
-import com.ids.desktop.model.CaseItem;
-import com.ids.desktop.model.FlaggedIpItem;
-import com.ids.desktop.model.MyWhitelistItem;
-import com.ids.desktop.model.OrgWhitelistItem;
-import okhttp3.*;
-
 import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -19,6 +9,21 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ids.desktop.model.AlertGroupItem;
+import com.ids.desktop.model.AlertItem;
+import com.ids.desktop.model.CaseItem;
+import com.ids.desktop.model.FlaggedIpItem;
+import com.ids.desktop.model.MyWhitelistItem;
+import com.ids.desktop.model.OrgWhitelistItem;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 public class BackendClient {
 
