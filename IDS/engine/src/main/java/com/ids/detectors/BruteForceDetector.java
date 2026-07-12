@@ -1,38 +1,55 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
+import com.ids.network.NetworkWhitelist;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Detects brute-force authentication attempts against SSH/RDP/FTP/Telnet.
+ *
+ * FIX: this detector previously had no NetworkWhitelist wired in at all —
+ * every other threshold-based detector in this codebase (NmapScanDetector,
+ * HttpAnomalyDetector, LateralMovementDetector, LowAndSlowScanDetector,
+ * SqlInjectionDetector, PortKnockingDetector) checks
+ * whitelist.isTrustedScanner() before building up per-source state, so an
+ * authorized pentest run, a credential-rotation script hitting many hosts,
+ * or a config-management tool bouncing through SSH doesn't get treated as
+ * an attacker. BruteForceDetector was the odd one out: there was no way to
+ * tell it "this host is allowed to do this" short of editing code. Same
+ * concept, same shared allowlist, now applied here too.
+ */
 public class BruteForceDetector implements Detector {
 
     private static final Set<Integer> AUTH_PORTS = Set.of(
-        22, // SSH
+        22,   // SSH
         3389, // RDP
-        21, // FTP
-        23 // Telnet
+        21,   // FTP
+        23    // Telnet
     );
 
     // Thresholds
-    private static final int ATTEMPT_THRESHOLD = 10;
-    private static final long WINDOW_MS = 60_000L;
-    private static final long COOLDOWN_MS = 300_000L;
+    private static final int  ATTEMPT_THRESHOLD = 10;
+    private static final long WINDOW_MS         = 60_000L;
+    private static final long COOLDOWN_MS       = 300_000L;
 
     // key = "srcIP:dstIP:dstPort"
     private final Map<String, List<Long>> attemptMap = new ConcurrentHashMap<>();
-    private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
+    private final Map<String, Long>       lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
+    private final NetworkWhitelist whitelist;
 
-    public BruteForceDetector(AlertManager alertManager) {
+    public BruteForceDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
+        this.whitelist = whitelist;
     }
 
     public void analyze(PacketContext ctx) {
@@ -60,6 +77,13 @@ public class BruteForceDetector implements Detector {
 
         // Only flag external → internal or internal → internal (not loopback)
         if (srcIP.startsWith("127.")) return;
+
+        // FIX: skip known-legitimate scanners/automation hosts (your own
+        // credential-rotation scripts, Ansible/Chef/Puppet/SaltStack control
+        // nodes, authorized pentest runs) before ever building up attempt
+        // history for them — same shared allowlist used across the rest of
+        // this codebase's threshold-based detectors.
+        if (whitelist.isTrustedScanner(srcIP)) return;
 
         long now = System.currentTimeMillis();
         String key = srcIP + ":" + dstIP + ":" + dstPort;
@@ -103,7 +127,7 @@ public class BruteForceDetector implements Detector {
             dstIP, dstMac,
             count, WINDOW_MS,
             "Brute force on port " + dstPort + ": " + srcIP + " → " + dstIP
-            + " (" + count + " connection attempts/min)",
+                + " (" + count + " connection attempts/min)",
             sev,
             proto, "BRUTE_FORCE", dstPort
         ));

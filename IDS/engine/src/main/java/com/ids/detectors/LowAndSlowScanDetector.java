@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -36,19 +36,23 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class LowAndSlowScanDetector implements Detector {
 
-    private static final int SLOW_PORT_THRESHOLD = 15; // distinct ports over the long window
-    private static final long LONG_WINDOW_MS = 300_000L; // 5-minute observation window
-    private static final long MIN_PROBE_GAP_MS = 1_000L; // probes must be >= 1s apart (not a flood)
+    // Tunable via ids-detection.properties; defaults preserve prior behavior.
+    private static final int SLOW_PORT_THRESHOLD =
+        com.ids.config.DetectionTuning.getInt("scan.slow.port.threshold", 15); // distinct ports over the long window
+    private static final long LONG_WINDOW_MS =
+        com.ids.config.DetectionTuning.getLong("scan.slow.window.ms", 300_000L); // 5-minute observation window
+    private static final long MIN_PROBE_GAP_MS =
+        com.ids.config.DetectionTuning.getLong("scan.slow.min.gap.ms", 1_000L); // probes must be >= 1s apart (not a flood)
     private static final long COOLDOWN_MS = 60_000L;
 
     // key = srcIP → deque of (dstPort packed with timestamp: long[]{port, time})
     private final Map<String, Deque<long[]>> probeLog = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     private final NetworkWhitelist whitelist;
 
-    public LowAndSlowScanDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public LowAndSlowScanDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

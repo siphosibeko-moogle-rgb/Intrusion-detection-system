@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -22,16 +22,27 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Two checks:
  *   SOURCE SWEEP — one internal IP pulls from >= SOURCE_THRESHOLD distinct
- *      internal IPs on data ports within WINDOW_MS.
+ *     internal IPs on data ports within WINDOW_MS.
  *   PORT SWEEP ON DATA PORTS — one internal IP accesses >= PORT_THRESHOLD
- *      distinct data/storage ports on any single internal target within WINDOW_MS.
- *      (e.g. hitting SMB + FTP + DB ports on the same server = grabbing everything)
+ *     distinct data/storage ports on any single internal target within WINDOW_MS.
+ *     (e.g. hitting SMB + FTP + DB ports on the same server = grabbing everything)
+ *
+ * FIX: previously had its own private isInternal(String ip) that checked
+ * `ip.startsWith(localSubnet) || ip.startsWith("10.") || ip.startsWith("172.16.")
+ * || ip.startsWith("172.31.") || ip.startsWith("192.168.")` — the same bug
+ * class already fixed in AfterHoursDetector, UserBehaviorAnomalyDetector,
+ * DataExfiltrationDetector, and LateralMovementDetector: only testing the
+ * two boundary /16s of 172.16.0.0/12 silently misses 172.17.x–172.30.x,
+ * Docker's and Kubernetes' default bridge/overlay range. Traffic from
+ * containers on that range was invisible to this detector. Now uses
+ * NetworkWhitelist.isInternal(), the single source of truth for that check
+ * everywhere else in this codebase.
  */
 public class DataStagingDetector implements Detector {
 
-    private static final int  SOURCE_THRESHOLD = 5;           // distinct source IPs pulled from
-    private static final int  PORT_THRESHOLD   = 4;           // distinct data ports on one target
-    private static final long WINDOW_MS        = 120_000L;    // 2-minute window
+    private static final int  SOURCE_THRESHOLD = 5;         // distinct source IPs pulled from
+    private static final int  PORT_THRESHOLD   = 4;         // distinct data ports on one target
+    private static final long WINDOW_MS        = 120_000L;  // 2-minute window
     private static final long COOLDOWN_MS      = 30_000L;
 
     // Ports that carry actual data (not just control/auth)
@@ -48,17 +59,18 @@ public class DataStagingDetector implements Detector {
             8080, 8443      // HTTP alt
     );
 
-    // key = collectorIP  →  map of (sourceIP → last-seen timestamp)
+    // key = collectorIP → map of (sourceIP → last-seen timestamp)
     private final Map<String, Map<String, Long>> sourcesContacted = new ConcurrentHashMap<>();
 
-    // key = "collectorIP->targetIP"  →  map of (port → last-seen timestamp)
+    // key = "collectorIP->targetIP" → map of (port → last-seen timestamp)
     private final Map<String, Map<Integer, Long>> portsOnTarget = new ConcurrentHashMap<>();
 
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
-    private final AlertManager alertManager;
+
+    private final AlertSink alertManager;
     private final NetworkWhitelist whitelist;
 
-    public DataStagingDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public DataStagingDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

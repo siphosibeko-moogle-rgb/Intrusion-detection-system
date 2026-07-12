@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -40,8 +40,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class LateralMovementDetector implements Detector {
 
-    private static final int UNIQUE_HOST_THRESHOLD = 5;
-    private static final long WINDOW_MS = 30_000L;
+    // Tunable via ids-detection.properties; defaults preserve prior behavior.
+    private static final int UNIQUE_HOST_THRESHOLD =
+        com.ids.config.DetectionTuning.getInt("lateral.host.threshold", 5);
+    private static final long WINDOW_MS =
+        com.ids.config.DetectionTuning.getLong("lateral.window.ms", 30_000L);
     private static final long COOLDOWN_MS = 30_000L;
 
     private static final Set<Integer> SENSITIVE_PORTS = Set.of(
@@ -60,10 +63,10 @@ public class LateralMovementDetector implements Detector {
     private final Map<String, Map<String, Long>> contactMap = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     private final NetworkWhitelist whitelist;
 
-    public LateralMovementDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public LateralMovementDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

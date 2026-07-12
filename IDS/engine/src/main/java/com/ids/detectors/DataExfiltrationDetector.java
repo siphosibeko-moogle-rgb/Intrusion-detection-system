@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.PacketRecord;
 import com.ids.models.ThreatEvent;
@@ -68,10 +68,10 @@ public class DataExfiltrationDetector implements Detector {
     private final Map<String, PacketRecord> flows = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     private final NetworkWhitelist whitelist;
 
-    public DataExfiltrationDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public DataExfiltrationDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

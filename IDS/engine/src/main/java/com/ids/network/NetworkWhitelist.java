@@ -65,6 +65,47 @@ public class NetworkWhitelist {
     private final Set<String> approvedOrgIps =
         Collections.newSetFromMap(new ConcurrentHashMap<>());
 
+    // CIDR-shaped org-whitelist entries ("104.16.0.0/13" for Cloudflare,
+    // "8.8.8.0/24", AWS ranges, …). Populated from the SAME backend
+    // org-whitelist as approvedOrgIps — an admin adds a row whose "ip" field
+    // is a CIDR block and the engine picks it up on the next refresh. This
+    // is what makes trusted infrastructure (CDN/cloud provider ranges)
+    // manageable through the application instead of per-IP or in code.
+    private final java.util.concurrent.CopyOnWriteArrayList<Cidr> approvedOrgCidrs =
+        new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** IPv4 CIDR block. parse() returns null for anything malformed. */
+    private record Cidr(long network, long mask) {
+        static Cidr parse(String s) {
+            int slash = s.indexOf('/');
+            if (slash < 0) return null;
+            long base = ipv4ToLong(s.substring(0, slash));
+            if (base < 0) return null;
+            int prefix;
+            try { prefix = Integer.parseInt(s.substring(slash + 1)); }
+            catch (NumberFormatException e) { return null; }
+            if (prefix < 0 || prefix > 32) return null;
+            long mask = prefix == 0 ? 0 : (0xFFFFFFFFL << (32 - prefix)) & 0xFFFFFFFFL;
+            return new Cidr(base & mask, mask);
+        }
+        boolean contains(long ip) { return ip >= 0 && (ip & mask) == network; }
+    }
+
+    /** Dotted-quad IPv4 → unsigned 32-bit value; -1 if not IPv4. */
+    private static long ipv4ToLong(String ip) {
+        String[] parts = ip.split("\\.");
+        if (parts.length != 4) return -1;
+        long v = 0;
+        for (String p : parts) {
+            int octet;
+            try { octet = Integer.parseInt(p); }
+            catch (NumberFormatException e) { return -1; }
+            if (octet < 0 || octet > 255) return -1;
+            v = (v << 8) | octet;
+        }
+        return v;
+    }
+
     public NetworkWhitelist() {
         loadProperties();
     }
@@ -81,6 +122,7 @@ public class NetworkWhitelist {
         trustedIps.clear();
         trustedMacs.clear();
         approvedOrgIps.clear();
+        approvedOrgCidrs.clear();
         loadTrustedDevicesFromBackend();
         loadApprovedOrgsFromBackend();
     }
@@ -264,11 +306,27 @@ public class NetworkWhitelist {
                     boolean approved = node.path("approved").asBoolean(false);
                     String  ip       = node.path("ip").asText(null);
                     if (approved && ip != null && !ip.isBlank()) {
-                        approvedOrgIps.add(normalize(ip));
-                        count++;
+                        String n = normalize(ip);
+                        // An entry containing "/" is a CIDR block (e.g. a
+                        // Cloudflare/AWS range added by an admin); anything
+                        // else stays an exact-IP match as before.
+                        if (n.contains("/")) {
+                            Cidr cidr = Cidr.parse(n);
+                            if (cidr != null) {
+                                approvedOrgCidrs.add(cidr);
+                                count++;
+                            } else {
+                                System.err.println("[Whitelist] IGNORING invalid "
+                                    + "CIDR in org whitelist: '" + n + "'");
+                            }
+                        } else {
+                            approvedOrgIps.add(n);
+                            count++;
+                        }
                     }
                 }
-                System.out.printf("[Whitelist] Loaded %d approved org IPs%n", count);
+                System.out.printf("[Whitelist] Loaded %d approved org IPs/ranges "
+                    + "(%d CIDR blocks)%n", count, approvedOrgCidrs.size());
             }
         } catch (Exception e) {
             System.err.println("[Whitelist] Could not load org whitelist: " + e.getMessage());
@@ -288,7 +346,14 @@ public class NetworkWhitelist {
 
     public boolean isApprovedOrg(String ip) {
         if (ip == null) return false;
-        return approvedOrgIps.contains(normalize(ip));
+        String n = normalize(ip);
+        if (approvedOrgIps.contains(n)) return true;
+        if (approvedOrgCidrs.isEmpty()) return false;
+        long v = ipv4ToLong(n);
+        for (Cidr cidr : approvedOrgCidrs) {
+            if (cidr.contains(v)) return true;
+        }
+        return false;
     }
 
     public boolean isInternal(String ip) {
@@ -300,11 +365,25 @@ public class NetworkWhitelist {
         // NPE inside every detector that calls isInternal() — a startup
         // config problem should degrade to "nothing is internal" (safe,
         // loud in the logs already) rather than crash the detection path.
-        if (subnet != null && n.startsWith(subnet)) return true;
+        if (subnet != null && matchesSubnetEntry(subnet, n)) return true;
         for (String dockerSubnet : dockerSubnets) {
-            if (n.startsWith(dockerSubnet)) return true;
+            if (matchesSubnetEntry(dockerSubnet, n)) return true;
         }
         return false;
+    }
+
+    // Subnet config entries accept two forms:
+    //  - CIDR ("192.168.8.0/24") — exact-boundary matching, preferred.
+    //  - Legacy dotted prefix ("192.168.8.") — kept for existing configs.
+    //    CAUTION with the legacy form: a prefix without a trailing dot
+    //    ("10.0.1") string-matches 10.0.10.x and 10.0.100.x too. Prefer
+    //    CIDR, or at least end the prefix with a dot.
+    private static boolean matchesSubnetEntry(String entry, String normalizedIp) {
+        if (entry.contains("/")) {
+            Cidr cidr = Cidr.parse(entry);
+            return cidr != null && cidr.contains(ipv4ToLong(normalizedIp));
+        }
+        return normalizedIp.startsWith(entry);
     }
 
     public void addTrustedIp(String ip) {

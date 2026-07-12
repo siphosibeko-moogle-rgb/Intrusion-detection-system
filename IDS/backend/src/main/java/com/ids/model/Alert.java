@@ -36,6 +36,26 @@ public class Alert {
 
     private Instant timestamp;
 
+    // ── Confidence / provenance (populated by the engine since rule v2.0;
+    //    null on rows ingested before these columns existed) ─────────────
+    private Integer confidenceScore;
+
+    @Column(length = 500)
+    private String confidenceReason;
+
+    private String detectedBy;
+    private String ruleVersion;
+    private String mitreAttack;
+
+    // ── Analyst verification / false-positive tracking ──────────────────
+    // UNVERIFIED → CONFIRMED | FALSE_POSITIVE. Feeds accuracy reporting and
+    // gives any future ML pipeline labelled training data.
+    @Column(length = 20)
+    private String verificationStatus = "UNVERIFIED";
+
+    private String verifiedBy;
+    private Instant verifiedAt;
+
     @PrePersist
     public void prePersist() { 
     	if (timestamp == null) timestamp = Instant.now();
@@ -114,7 +134,24 @@ public class Alert {
     public void setDetails(String v) { 
     	details  = v; 
     	}
-    public void setTimestamp(Instant v){ 
-    	timestamp = v; 
+    public void setTimestamp(Instant v){
+    	timestamp = v;
     	}
+
+    public Integer getConfidenceScore()            { return confidenceScore; }
+    public void setConfidenceScore(Integer v)      { confidenceScore = v; }
+    public String getConfidenceReason()            { return confidenceReason; }
+    public void setConfidenceReason(String v)      { confidenceReason = v; }
+    public String getDetectedBy()                  { return detectedBy; }
+    public void setDetectedBy(String v)            { detectedBy = v; }
+    public String getRuleVersion()                 { return ruleVersion; }
+    public void setRuleVersion(String v)           { ruleVersion = v; }
+    public String getMitreAttack()                 { return mitreAttack; }
+    public void setMitreAttack(String v)           { mitreAttack = v; }
+    public String getVerificationStatus()          { return verificationStatus; }
+    public void setVerificationStatus(String v)    { verificationStatus = v; }
+    public String getVerifiedBy()                  { return verifiedBy; }
+    public void setVerifiedBy(String v)            { verifiedBy = v; }
+    public Instant getVerifiedAt()                 { return verifiedAt; }
+    public void setVerifiedAt(Instant v)           { verifiedAt = v; }
 }

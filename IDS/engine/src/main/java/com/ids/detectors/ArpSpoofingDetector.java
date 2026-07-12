@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
 import com.ids.models.ThreatEvent.ThreatType;
@@ -25,10 +25,10 @@ public class ArpSpoofingDetector implements Detector {
     private static final long WINDOW_MS         = 2_000L;
     private static final long CONFLICT_COOLDOWN = 5_000L;
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     private final String       gatewayIp;
 
-    public ArpSpoofingDetector(AlertManager alertManager, String gatewayIp) {
+    public ArpSpoofingDetector(AlertSink alertManager, String gatewayIp) {
         this.alertManager = alertManager;
         this.gatewayIp    = gatewayIp;
     }
@@ -73,7 +73,10 @@ public class ArpSpoofingDetector implements Detector {
         // Gratuitous ARP
         Set<String> requesters = pendingRequests.get(senderIP);
         if (requesters == null || requesters.isEmpty()) {
-            Severity sev = senderIP.equals(gatewayIp) ? Severity.CRITICAL : Severity.MEDIUM;
+            // Non-gateway unsolicited ARP is routine (DHCP renewal, Wi-Fi
+            // reconnect, VRRP) → LOW. A host claiming to be the GATEWAY
+            // unprompted is the textbook first packet of an ARP MITM → CRITICAL.
+            Severity sev = senderIP.equals(gatewayIp) ? Severity.CRITICAL : Severity.LOW;
             alertManager.raise(new ThreatEvent(ThreatType.GRATUITOUS_ARP,
 					                senderIP, 
 					                senderMac, 

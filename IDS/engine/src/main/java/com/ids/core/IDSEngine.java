@@ -124,12 +124,12 @@ public class IDSEngine {
         nmapDetector            = new NmapScanDetector(alertManager, whitelist);
         whitelistDetector = new WhitelistViolationDetector(alertManager, whitelist);
         arpDetector             = new ArpSpoofingDetector(alertManager, whitelist.getGateway());
-        dnsDetector             = new DnsTunnelingDetector(alertManager);
+        dnsDetector             = dnsDetector = new DnsTunnelingDetector(alertManager, whitelist);
         exfilDetector           = new DataExfiltrationDetector(alertManager, whitelist);
         afterHoursDetector      = new AfterHoursDetector(alertManager, whitelist,
                                           whitelist.getWorkStartHour(), whitelist.getWorkEndHour(),
                                           whitelist.getWorkTimezone(), whitelist.isWeekendAlert());
-        bruteForceDetector      = new BruteForceDetector(alertManager);
+        bruteForceDetector      = bruteForceDetector = new BruteForceDetector(alertManager, whitelist);
         beaconingDetector       = new BeaconingDetector(alertManager, whitelist);
         // was new LateralMovementDetector(alertManager, subnet) — subnet
         // is a leftover from before this detector added whitelist.isInternal()
@@ -142,9 +142,8 @@ public class IDSEngine {
         // startup could get permanently trusted). Replaced with an explicit
         // whitelist.isTrustedDhcpServer(mac) allowlist check inside the detector.
         rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist);
-        fileTransferDetector = new FileTransferDetector(alertManager, whitelist,
-        	    whitelist.getInternalServers());
-        	dataStagingDetector = new DataStagingDetector(alertManager, whitelist);
+        fileTransferDetector = new FileTransferDetector(alertManager, whitelist);
+        	dataStagingDetector =  dataStagingDetector = new DataStagingDetector(alertManager, whitelist);
         ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, whitelist);
         // FIX: all three below gained whitelist.isTrustedScanner() exemptions
         // (so your own vuln scanner / sqlmap / automation doesn't page you)

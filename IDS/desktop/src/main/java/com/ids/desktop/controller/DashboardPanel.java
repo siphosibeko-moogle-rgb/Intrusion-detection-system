@@ -114,15 +114,14 @@ public class DashboardPanel extends VBox {
 
     private TableView<DashCaseRow> recentCasesTable;
     private final ObservableList<DashCaseRow> recentCases = FXCollections.observableArrayList();
-
-    // ── System health widget ───────────────────────────────────────────
-    private final Map<String, Circle> healthDots = new LinkedHashMap<>();
-    private final Map<String, Label> healthLabels = new LinkedHashMap<>();
+    private final java.util.function.Consumer<String> onIpClick;
+   
 
     private Label lblLastUpdated;
 
-    public DashboardPanel(BackendClient backend) {
+    public DashboardPanel(BackendClient backend, java.util.function.Consumer<String> onIpClick) {
         this.backend = backend;
+        this.onIpClick = onIpClick;
         setStyle("-fx-background-color: " + BG_ROOT + ";");
         setSpacing(16);
         setPadding(new Insets(16));
@@ -266,49 +265,15 @@ public class DashboardPanel extends VBox {
         severityChart.setLegendVisible(true);
         severityChart.setLabelsVisible(true);
         severityChart.setStyle("-fx-background-color: " + BG_CARD + ";");
-        severityChart.setPrefHeight(260);
-        severityChart.setPrefWidth(280);
+        severityChart.setPrefHeight(280);
+        severityChart.setPrefWidth(340);
         severityBox.getChildren().add(severityChart);
 
         row.getChildren().addAll(activityBox, severityBox);
         return row;
     }
 
-    // ── Row 3: recent alerts table + system health widget ──────────────
-
     
-    
-
-    private VBox buildHealthWidget() {
-        VBox box = new VBox(8);
-        box.setPadding(new Insets(4, 0, 0, 0));
-
-        addHealthRow(box, "packetCapture", "Packet Capture");
-        addHealthRow(box, "backendApi", "Backend API");
-        addHealthRow(box, "database", "Database");
-        addHealthRow(box, "liveFeed", "Live Feed");
-        addHealthRow(box, "cpu", "CPU Usage");
-        addHealthRow(box, "ram", "RAM Usage");
-        addHealthRow(box, "disk", "Disk Usage");
-
-        return box;
-    }
-
-    private void addHealthRow(VBox box, String key, String label) {
-        Circle dot = new Circle(5, Color.web(COLOR_UNKNOWN));
-        Label lbl = new Label(label);
-        lbl.setStyle("-fx-text-fill: " + TEXT_MAIN + "; -fx-font-size: 12;");
-
-        HBox row = new HBox(8, dot, lbl);
-        row.setAlignment(Pos.CENTER_LEFT);
-
-        healthDots.put(key, dot);
-        healthLabels.put(key, lbl);
-        box.getChildren().add(row);
-    }
-
-    // ── Row 4: recent investigations ────────────────────────────────────
-
     private VBox buildRecentCasesSection() {
         VBox box = panelContainer("Recent Investigations");
         recentCasesTable = buildRecentCasesTable();
@@ -371,11 +336,10 @@ public class DashboardPanel extends VBox {
 
         try {
             JsonNode summary = mapper.readTree(backend.getRaw("/api/dashboard/summary"));
-            JsonNode health = mapper.readTree(backend.getRaw("/api/dashboard/health"));
             JsonNode actorsJson = mapper.readTree(backend.getRaw("/api/dashboard/threat-actors?limit=15"));
             Platform.runLater(() -> {
-                applySummary(summary);
-                applyHealth(health);
+            	applySummary(summary);
+                applyThreatActors(actorsJson);
                 applyThreatActors(actorsJson);
                 lblLastUpdated.setText("Last updated " +
                         DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
@@ -451,43 +415,6 @@ public class DashboardPanel extends VBox {
             return isoTimestamp;
         }
     }
-
-    private void applyHealth(JsonNode h) {
-        setDot("packetCapture", h.path("packetCapture").path("status").asText("UNKNOWN"));
-        setDot("backendApi", h.path("backendApi").path("status").asText("UNKNOWN"));
-        setDot("database", h.path("database").path("status").asText("UNKNOWN"));
-        setDot("liveFeed", h.path("liveFeed").path("status").asText("UNKNOWN"));
-
-        setDotWithValue("cpu", h.path("cpu").path("status").asText("UNKNOWN"),
-                h.path("cpu").path("value").asDouble(-1), "CPU Usage");
-        setDotWithValue("ram", h.path("ram").path("status").asText("UNKNOWN"),
-                h.path("ram").path("value").asDouble(-1), "RAM Usage");
-        setDotWithValue("disk", h.path("disk").path("status").asText("UNKNOWN"),
-                h.path("disk").path("value").asDouble(-1), "Disk Usage");
-    }
-
-    private void setDot(String key, String status) {
-        Circle dot = healthDots.get(key);
-        if (dot != null) dot.setFill(Color.web(colorForStatus(status)));
-    }
-
-    private void setDotWithValue(String key, String status, double value, String baseLabel) {
-        setDot(key, status);
-        Label lbl = healthLabels.get(key);
-        if (lbl != null) {
-            lbl.setText(value >= 0 ? baseLabel + " " + Math.round(value) + "%" : baseLabel);
-        }
-    }
-
-    private String colorForStatus(String status) {
-        return switch (status.toUpperCase()) {
-            case "OK" -> COLOR_OK;
-            case "WARN" -> COLOR_WARN;
-            case "ERROR" -> COLOR_ERROR;
-            default -> COLOR_UNKNOWN;
-        };
-    }
-
     public static class ThreatActorRow {
         private final int rank;
         private final String ip, topThreatType, lastSeen;
@@ -545,22 +472,12 @@ public class DashboardPanel extends VBox {
         }
         threatActors.setAll(rows);
     }
-    private HBox buildAlertsAndHealthRow() {
-        HBox row = new HBox(16);
-
+    private VBox buildAlertsAndHealthRow() {
         VBox actorsBox = panelContainer("Threat Actors");
         threatActorsTable = buildThreatActorsTable();
-        threatActorsTable.setPrefHeight(260);
+        threatActorsTable.setPrefHeight(320); // taller now that it owns the full row
         actorsBox.getChildren().add(threatActorsTable);
-        HBox.setHgrow(actorsBox, Priority.ALWAYS);
-
-        VBox healthBox = panelContainer("System Health");
-        healthBox.setMinWidth(230);
-        healthBox.setPrefWidth(230);
-        healthBox.getChildren().add(buildHealthWidget());
-
-        row.getChildren().addAll(actorsBox, healthBox);
-        return row;
+        return actorsBox;
     }
 
     private TableView<ThreatActorRow> buildThreatActorsTable() {
@@ -576,6 +493,15 @@ public class DashboardPanel extends VBox {
         TableColumn<ThreatActorRow, String> colIp = new TableColumn<>("IP");
         colIp.setCellValueFactory(new PropertyValueFactory<>("ip"));
         colIp.setPrefWidth(110);
+        colIp.setCellFactory(col -> new TableCell<>() {
+            @Override protected void updateItem(String ip, boolean empty) {
+                super.updateItem(ip, empty);
+                if (empty || ip == null) { setText(null); setStyle(""); setOnMouseClicked(null); return; }
+                setText(ip);
+                setStyle("-fx-text-fill: " + Theme.ACCENT + "; -fx-font-weight:bold; -fx-cursor:hand; -fx-underline:true;");
+                setOnMouseClicked(e -> { if (onIpClick != null) onIpClick.accept(ip); });
+            }
+        });
 
         TableColumn<ThreatActorRow, ThreatActorRow> colScore = new TableColumn<>("Threat Score");
         colScore.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue()));
@@ -593,6 +519,8 @@ public class DashboardPanel extends VBox {
         TableColumn<ThreatActorRow, String> colLastSeen = new TableColumn<>("Last Seen");
         colLastSeen.setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
         colLastSeen.setPrefWidth(120);
+        
+        
 
         tv.getColumns().addAll(List.of(colRank, colIp, colScore, colAlerts, colTopThreat, colLastSeen));
         return tv;

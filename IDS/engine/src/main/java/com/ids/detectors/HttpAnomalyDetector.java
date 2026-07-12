@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -48,7 +48,9 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class HttpAnomalyDetector implements Detector {
 
-    private static final int FLOOD_THRESHOLD = 50;
+    // Tunable via ids-detection.properties; default preserves prior behavior.
+    private static final int FLOOD_THRESHOLD =
+        com.ids.config.DetectionTuning.getInt("http.flood.threshold", 50);
     private static final int MAX_URI_LENGTH = 2048;
     private static final long WINDOW_MS = 2_000L;
     private static final long COOLDOWN_MS = 5_000L;
@@ -71,13 +73,13 @@ public class HttpAnomalyDetector implements Detector {
     private final Map<String, List<Long>> requestLog = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     // FIX: added so the scanner-UA check can skip known, authorized
     // internal security tools instead of alerting on your own
     // vulnerability-management program every time it runs.
     private final NetworkWhitelist whitelist;
 
-    public HttpAnomalyDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public HttpAnomalyDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

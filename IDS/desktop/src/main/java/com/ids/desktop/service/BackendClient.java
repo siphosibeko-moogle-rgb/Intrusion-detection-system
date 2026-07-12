@@ -37,7 +37,11 @@ public class BackendClient {
     private final ObjectMapper mapper = new ObjectMapper();
     private String jwtToken = "";
 
-    public void invalidateSession() { jwtToken = ""; }
+    public void invalidateSession() {
+        jwtToken = "";
+        username = null;
+        password = null;
+    }
 
     public BackendClient(String baseUrl) {
         this.baseUrl = baseUrl;
@@ -60,6 +64,10 @@ public class BackendClient {
             if (!resp.isSuccessful()) return false;
             JsonNode node = mapper.readTree(resp.body().string());
             jwtToken = textOf(node, "token", "");
+            if (!jwtToken.isEmpty()) {
+                this.username = username;
+                this.password = password;
+            }
             return !jwtToken.isEmpty();
         }
     }
@@ -328,63 +336,91 @@ public class BackendClient {
     public JsonNode getTimeline(String ip) throws Exception {
         return mapper.readTree(get("/api/alerts/timeline/" + ip));
     }
+ // ── AUTH RETRY STATE ─────────────────────────────────────────────────
+    // Set on every successful login(), cleared only by invalidateSession()
+    // (an explicit logout). This lets a single rejected/expired token be
+    // silently repaired without forcing the user back to the login screen —
+    // see executeWithRetry() below.
+    private String username, password;
 
     // ── HTTP HELPERS ──────────────────────────────────────────────────────
 
+    private boolean silentReLogin() {
+        if (username == null || password == null) return false;
+        try {
+            return login(username, password);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Executes an HTTP call; on a single 401, silently re-authenticates with
+     *  the stored credentials and retries exactly once. requestBuilder is a
+     *  Supplier, not a plain Request, because OkHttp Requests are immutable —
+     *  the retry must rebuild the Authorization header with the fresh token,
+     *  not resend the one that just got rejected. */
+    private Response executeWithRetry(java.util.function.Supplier<Request> requestBuilder) throws IOException {
+        Response resp = http.newCall(requestBuilder.get()).execute();
+        if (resp.code() == 401) {
+            resp.close();
+            if (silentReLogin()) {
+                resp = http.newCall(requestBuilder.get()).execute();
+            } else {
+                throw new IOException("Session expired — please log in again");
+            }
+        }
+        return resp;
+    }
+
     private String get(String path) throws IOException {
-        Request req = new Request.Builder()
-            .url(baseUrl + path)
-            .addHeader("Authorization", "Bearer " + jwtToken)
-            .get().build();
-        try (Response resp = http.newCall(req).execute()) {
-            if (resp.code() == 401) throw new IOException("Session expired — please log in again");
+        try (Response resp = executeWithRetry(() -> new Request.Builder()
+                .url(baseUrl + path)
+                .addHeader("Authorization", "Bearer " + jwtToken)
+                .get().build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
             return resp.body().string();
         }
     }
 
     private void post(String path, String json) throws IOException {
-        Request req = new Request.Builder()
-            .url(baseUrl + path)
-            .addHeader("Authorization", "Bearer " + jwtToken)
-            .post(RequestBody.create(json, MediaType.get("application/json")))
-            .build();
-        try (Response resp = http.newCall(req).execute()) {
+        try (Response resp = executeWithRetry(() -> new Request.Builder()
+                .url(baseUrl + path)
+                .addHeader("Authorization", "Bearer " + jwtToken)
+                .post(RequestBody.create(json, MediaType.get("application/json")))
+                .build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
         }
     }
 
     public void put(String path, String json) throws IOException {
-        Request req = new Request.Builder()
-            .url(baseUrl + path)
-            .addHeader("Authorization", "Bearer " + jwtToken)
-            .put(RequestBody.create(json, MediaType.get("application/json")))
-            .build();
-        try (Response resp = http.newCall(req).execute()) {
+        try (Response resp = executeWithRetry(() -> new Request.Builder()
+                .url(baseUrl + path)
+                .addHeader("Authorization", "Bearer " + jwtToken)
+                .put(RequestBody.create(json, MediaType.get("application/json")))
+                .build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
         }
     }
 
     private void patch(String path) throws IOException {
-        Request req = new Request.Builder()
-            .url(baseUrl + path)
-            .addHeader("Authorization", "Bearer " + jwtToken)
-            .patch(RequestBody.create("{}", MediaType.get("application/json")))
-            .build();
-        try (Response resp = http.newCall(req).execute()) {
+        try (Response resp = executeWithRetry(() -> new Request.Builder()
+                .url(baseUrl + path)
+                .addHeader("Authorization", "Bearer " + jwtToken)
+                .patch(RequestBody.create("{}", MediaType.get("application/json")))
+                .build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
         }
     }
 
     public void delete(String path) throws IOException {
-        Request req = new Request.Builder()
-            .url(baseUrl + path)
-            .addHeader("Authorization", "Bearer " + jwtToken)
-            .delete().build();
-        try (Response resp = http.newCall(req).execute()) {
+        try (Response resp = executeWithRetry(() -> new Request.Builder()
+                .url(baseUrl + path)
+                .addHeader("Authorization", "Bearer " + jwtToken)
+                .delete().build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
         }
     }
+    
 
     // ── JSON helpers ──────────────────────────────────────────────────────
 

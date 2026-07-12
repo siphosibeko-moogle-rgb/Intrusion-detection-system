@@ -8,7 +8,7 @@ import java.io.*;
 import java.time.LocalDateTime;
 import java.util.concurrent.*;
 
-public class AlertManager implements Runnable {
+public class AlertManager implements Runnable, AlertSink {
 
     private static final String RESET  = "\033[0m";
     private static final String RED    = "\033[0;31m";
@@ -113,10 +113,10 @@ public class AlertManager implements Runnable {
 
     private void printConsole(ThreatEvent e) {
         String color = switch (e.getSeverity()) {
-            case CRITICAL -> RED;
-            case HIGH     -> ORANGE;
-            case MEDIUM   -> YELLOW;
-            case LOW      -> CYAN;
+            case CRITICAL   -> RED;
+            case HIGH       -> ORANGE;
+            case MEDIUM     -> YELLOW;
+            case LOW, INFO  -> CYAN;
         };
         String border = color + BOLD + "█".repeat(70) + RESET;
         System.out.println(border);

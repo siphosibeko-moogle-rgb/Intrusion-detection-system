@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -47,10 +47,10 @@ public class RogueDHCPDetector implements Detector {
 
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     private final NetworkWhitelist whitelist;
 
-    public RogueDHCPDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public RogueDHCPDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

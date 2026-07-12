@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -46,7 +46,7 @@ public class UserBehaviorAnomalyDetector implements Detector {
     private final Map<String, Deque<Long>> eventTimes = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     // FIX: replaced the local String localSubnet + a hand-rolled isInternal()
     // with the shared NetworkWhitelist instance. The old check only tested
     // ip.startsWith("172.16.") and ip.startsWith("172.31.") — the two boundary
@@ -59,7 +59,7 @@ public class UserBehaviorAnomalyDetector implements Detector {
     // subnets, so this is a real coverage fix, not just a cleanup.
     private final NetworkWhitelist whitelist;
 
-    public UserBehaviorAnomalyDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public UserBehaviorAnomalyDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

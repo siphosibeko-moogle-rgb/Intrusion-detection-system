@@ -11,6 +11,7 @@ public class SeverityStyle {
             case "HIGH"     -> "-fx-text-fill: #f97316; -fx-font-weight: bold;";
             case "MEDIUM"   -> "-fx-text-fill: #eab308;";
             case "LOW"      -> "-fx-text-fill: #22c55e;";
+            case "INFO"     -> "-fx-text-fill: #60a5fa;";
             default         -> "-fx-text-fill: #94a3b8;";
         };
     }
@@ -30,6 +31,7 @@ public class SeverityStyle {
             case "HIGH"     -> "HIGH";
             case "MEDIUM"   -> "MEDIUM";
             case "LOW"      -> "LOW";
+            case "INFO"     -> "INFO";
             default         -> severity;
         };
     }

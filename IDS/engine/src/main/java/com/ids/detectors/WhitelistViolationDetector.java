@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class WhitelistViolationDetector implements Detector {
 
-	private final AlertManager alertManager;
+	private final AlertSink alertManager;
 	private final NetworkWhitelist whitelist;
 
     private final Map<String, Long> lastAlertTime = new ConcurrentHashMap<>();
@@ -28,7 +28,7 @@ public class WhitelistViolationDetector implements Detector {
     private final long startTime = System.currentTimeMillis();
     private static final long WARMUP_MS = 90_000L;
 
-    public WhitelistViolationDetector(AlertManager alertManager,
+    public WhitelistViolationDetector(AlertSink alertManager,
                                       NetworkWhitelist whitelist ) {
         this.alertManager      = alertManager;
         this.whitelist         = whitelist;
@@ -69,8 +69,12 @@ public class WhitelistViolationDetector implements Detector {
             alertManager.raise(new ThreatEvent(
                 ThreatType.UNKNOWN_IP, srcIP, srcMac,
                 dstIP, null, 1, 0,
+                // LOW, not MEDIUM: a new device on the LAN is common (guest
+                // laptops, phones joining wifi) — matches the ARP path below
+                // and the UNKNOWN_IP severity floor. Floors only raise, so
+                // this call site had to be lowered explicitly.
                 "Unknown internal IP: " + srcIP + " [MAC: " + srcMac + "]",
-                Severity.MEDIUM, proto, "UNKNOWN", 0
+                Severity.LOW, proto, "UNKNOWN", 0
             ));
         }
 
@@ -86,8 +90,9 @@ public class WhitelistViolationDetector implements Detector {
             alertManager.raise(new ThreatEvent(
                 ThreatType.UNKNOWN_MAC, srcIP, srcMac,
                 dstIP, null, 1, 0,
+                // LOW for the same reason as UNKNOWN_IP above.
                 "Unknown MAC on LAN: " + srcMac + " (IP: " + srcIP + ")",
-                Severity.MEDIUM, proto, "UNKNOWN", 0
+                Severity.LOW, proto, "UNKNOWN", 0
             ));
         }
 

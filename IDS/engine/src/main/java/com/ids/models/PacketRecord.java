@@ -26,6 +26,7 @@ public class PacketRecord {
     private final List<Long> xmasEvents = new ArrayList<>();
     private final List<Long> udpEvents = new ArrayList<>();
     private final List<Long> osProbeEvents = new ArrayList<>();
+    private final List<Long> establishedEvents = new ArrayList<>();
 
     //DNS
     private final List<Long> dnsQueryTimestamps = new ArrayList<>();
@@ -178,6 +179,24 @@ public class PacketRecord {
      clean(xmasEvents, now, WINDOW_2S);
      return xmasEvents.size();
  }
+ // ESTABLISHED TRAFFIC
+ // ACK-bearing, non-SYN packets: the source completed the handshake and is
+ // exchanging real data on this flow. A half-open scanner (nmap -sS) never
+ // produces these — it sends SYN, receives SYN/ACK, replies RST. Used by
+ // NmapScanDetector to discount SYNs that were followed by actual
+ // application traffic (browsing) from the SYN-scan count.
+
+ public synchronized void recordEstablished(long now) {
+     establishedEvents.add(now);
+     clean(establishedEvents, now, WINDOW_2S);
+     lastSeen = now;
+ }
+
+ public synchronized int getEstablishedCount(long now) {
+     clean(establishedEvents, now, WINDOW_2S);
+     return establishedEvents.size();
+ }
+
  // UDP
 
  public synchronized void recordUdp(long now) {

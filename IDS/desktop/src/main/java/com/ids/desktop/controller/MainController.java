@@ -10,16 +10,12 @@ import com.ids.desktop.service.HealthPoller;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
-import javafx.collections.transformation.FilteredList;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.control.*;
-import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.paint.Color;
-import javafx.scene.shape.Circle;
 
 import java.net.URL;
 import java.time.Instant;
@@ -28,7 +24,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ResourceBundle;
 import java.util.concurrent.*;
-import java.util.stream.Collectors;
 import javafx.scene.layout.StackPane;
 
 public class MainController implements Initializable {
@@ -41,7 +36,6 @@ public class MainController implements Initializable {
     // ── FXML BINDINGS ─────────────────────────────────────────────────────────
     
     @FXML private Label  lblUser;
-    @FXML private TextField tfGlobalSearch;
     @FXML private StackPane healthHost;
     
 
@@ -60,12 +54,7 @@ public class MainController implements Initializable {
     
     @FXML private javafx.scene.layout.StackPane dashboardHost;
 
-    // Attackers tab
-    @FXML private TableView<AlertItem>            attackerTable;
-    @FXML private TableColumn<AlertItem, String>  colAtkIp, colAtkMac;
-    @FXML private TableColumn<AlertItem, Integer> colAtkCount;
-    @FXML private TextField                       tfFilterAtkIp;
-
+  
     // My whitelist
     @FXML private TableView<MyWhitelistItem>            myWhitelistTable;
     @FXML private TableColumn<MyWhitelistItem, String>  colMyWlIp, colMyWlMac, colMyWlLabel, colMyWlAddedAt;
@@ -111,30 +100,27 @@ public class MainController implements Initializable {
     @FXML private void onOpenAlertGroups() { openAlertGroups(); }
 
     // ── STATE ─────────────────────────────────────────────────────────────────
+    // MainController is a coordinator: it owns login/lifecycle, the live feed,
+    // and side-panel navigation. Everything table-specific lives in dedicated
+    // managers (AlertTableManager, WhitelistPanelManager, CaseBoardManager,
+    // DashboardPanel) that receive the FXML-injected controls via bind/setup.
     private BackendClient        backend;
     private LiveFeedClient       wsFeed;
     private DataLoader           dataLoader;
     private AlertTableManager    alertManager;
+    private WhitelistPanelManager whitelistManager;
+    private CaseBoardManager     caseBoard;
     private IpInvestigationPanel investigationPanel;
     private CaseDetailPanel   caseDetailPanel;
     private AlertGroupsPanel  alertGroupsPanel;
-    private StackPane         sidePanelStack;     
+    private StackPane         sidePanelStack;
     private DashboardPanel dashboardPanel;
     private HeaderHealthWidget healthWidget;
     private HealthPoller healthPoller;
-    
-    private final ObservableList<AlertItem>        allAlerts      = FXCollections.observableArrayList();
-    private final ObservableList<AlertItem>        attackers      = FXCollections.observableArrayList();
-    private final ObservableList<String>           liveEntries    = FXCollections.observableArrayList();
-    private final ObservableList<CaseItem>         caseEntries    = FXCollections.observableArrayList();
-    private final ObservableList<MyWhitelistItem>  myWlEntries    = FXCollections.observableArrayList();
-    private final ObservableList<OrgWhitelistItem> orgAcceptedRaw = FXCollections.observableArrayList();
-    private final ObservableList<OrgWhitelistItem> orgPendingRaw  = FXCollections.observableArrayList();
-    private final ObservableList<FlaggedIpItem>    flaggedIps     = FXCollections.observableArrayList();
 
-    private FilteredList<MyWhitelistItem>  filteredMyWl;
-    private FilteredList<OrgWhitelistItem> orgAccepted, orgPending;
-    private FilteredList<CaseItem>         filteredCases;
+    private final ObservableList<AlertItem>        allAlerts      = FXCollections.observableArrayList();
+
+    private final ObservableList<String>           liveEntries    = FXCollections.observableArrayList();
 
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -151,21 +137,17 @@ public class MainController implements Initializable {
         backend = new BackendClient(BACKEND_URL);
         dataLoader = new DataLoader(backend);
         
-        dashboardPanel = new DashboardPanel(backend);
+        dashboardPanel = new DashboardPanel(backend, this::openInvestigation);
         dashboardHost.getChildren().add(dashboardPanel);
 
         alertManager = new AlertTableManager(
                 alertTable,
-                attackerTable,
                 tfFilterIp,
                 tfFilterMac,
                 tfFilterType,
                 cbFilterSeverity,
                 cbFilterProtocol,
-                tfFilterAtkIp,
-                allAlerts,
-                attackers
-        );
+                allAlerts);
 
         alertManager.setup(
                 colTimestamp,
@@ -178,19 +160,41 @@ public class MainController implements Initializable {
                 colRequestType,
                 colPackets,
                 colDetails,
-                colOccurrences,
-                colAtkIp,
-                colAtkMac,
-                colAtkCount
-        );
+                colOccurrences);
 
-        setupWhitelistTables();
-        setupCasesTable();
+        whitelistManager = new WhitelistPanelManager(
+                () -> dataLoader, () -> backend, this::isReady,
+                msg -> lblLoginStatus.setText(msg));
+        whitelistManager.bindMyWhitelist(myWhitelistTable,
+                colMyWlIp, colMyWlMac, colMyWlLabel, colMyWlAddedAt,
+                tfNewMyWlIp, tfNewMyWlMac, tfNewMyWlLabel, tfFilterWlIp);
+        whitelistManager.bindFlaggedIps(flaggedIpTable,
+                colFlagSel, colFlagIp, colFlagMac, colFlagThreat,
+                colFlagProto, colFlagHits, colFlagSeen,
+                cbSelectAllFlagged, lblFlaggedCount);
+        whitelistManager.bindOrgTables(orgAcceptedTable,
+                colOrgAccIp, colOrgAccName, colOrgAccAsn,
+                colOrgAccCountry, colOrgAccHits, colOrgAccSeen,
+                orgPendingTable,
+                colOrgPendSel, colOrgPendIp, colOrgPendMac, colOrgPendName,
+                colOrgPendAsn, colOrgPendCountry, colOrgPendHits, colOrgPendSeen,
+                cbSelectAllPendingOrg, lblPendingOrgCount);
+
+        caseBoard = new CaseBoardManager(
+                () -> dataLoader, () -> backend, this::isReady,
+                this::openCaseDetail);
+        caseBoard.bind(casesTable,
+                colCaseNum, colCaseTitle, colCaseStatus, colCaseSeverity,
+                colCaseSuspectIp, colCaseSuspectMac, colCaseThreatType,
+                colCaseAssignedTo, colCaseOpenedAt,
+                tfCaseFilterStatus, tfCaseFilterIp,
+                tfNewCaseTitle, tfNewCaseSuspectIp, tfNewCaseSuspectMac,
+                cbNewCaseSeverity, lblCaseStatus);
 
         liveFeedList.setItems(liveEntries);
 
         cbFilterSeverity.setItems(FXCollections.observableArrayList(
-                "", "CRITICAL", "HIGH", "MEDIUM", "LOW"));
+                "", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"));
 
         cbFilterProtocol.setItems(FXCollections.observableArrayList(
                 "", "TCP", "UDP", "ICMP", "ARP"));
@@ -199,146 +203,11 @@ public class MainController implements Initializable {
                 "CRITICAL", "HIGH", "MEDIUM", "LOW"));
         cbNewCaseSeverity.setValue("HIGH");
 
-        tfFilterWlIp.textProperty().addListener((obs, oldVal, newVal) -> applyWlFilter());
-        tfCaseFilterStatus.textProperty().addListener((obs, oldVal, newVal) -> applyCaseFilter());
-        tfCaseFilterIp.textProperty().addListener((obs, oldVal, newVal) -> applyCaseFilter());
-
         healthWidget = new HeaderHealthWidget();
         healthHost.getChildren().add(healthWidget);
 
         // NEW: Replaces setupInvestigationPanel() and setupCaseDetailPanel()
         setupSidePanels();
-
-        wireCaseTableDoubleClick();
-    }
-    // ── TABLE SETUP ───────────────────────────────────────────────────────────
-
-    private void setupWhitelistTables() {
-        colMyWlIp     .setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colMyWlMac    .setCellValueFactory(new PropertyValueFactory<>("mac"));
-        colMyWlLabel  .setCellValueFactory(new PropertyValueFactory<>("label"));
-        colMyWlAddedAt.setCellValueFactory(new PropertyValueFactory<>("addedAt"));
-        colMyWlIp.setCellFactory(col -> cyanCell());
-        filteredMyWl = new FilteredList<>(myWlEntries, p -> true);
-        myWhitelistTable.setItems(filteredMyWl);
-        myWhitelistTable.setPlaceholder(new Label("No trusted devices."));
-
-        colFlagSel   .setCellValueFactory(new PropertyValueFactory<>("selected"));
-        colFlagSel   .setCellFactory(col -> checkBoxCell(FlaggedIpItem.class));
-        colFlagIp    .setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colFlagMac   .setCellValueFactory(new PropertyValueFactory<>("mac"));
-        colFlagThreat.setCellValueFactory(new PropertyValueFactory<>("threatType"));
-        colFlagProto .setCellValueFactory(new PropertyValueFactory<>("protocol"));
-        colFlagHits  .setCellValueFactory(new PropertyValueFactory<>("hits"));
-        colFlagSeen  .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
-        colFlagThreat.setCellFactory(col -> amberCell());
-        colFlagHits  .setCellFactory(col -> hitCountCell());
-        flaggedIpTable.setItems(flaggedIps);
-        flaggedIpTable.setPlaceholder(new Label("No flagged IPs."));
-
-        colOrgAccIp     .setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colOrgAccName   .setCellValueFactory(new PropertyValueFactory<>("orgName"));
-        colOrgAccAsn    .setCellValueFactory(new PropertyValueFactory<>("asn"));
-        colOrgAccCountry.setCellValueFactory(new PropertyValueFactory<>("country"));
-        colOrgAccHits   .setCellValueFactory(new PropertyValueFactory<>("hits"));
-        colOrgAccSeen   .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
-        colOrgAccIp.setCellFactory(col -> cyanCell());
-        orgAccepted = new FilteredList<>(orgAcceptedRaw, p -> true);
-        orgAcceptedTable.setItems(orgAccepted);
-
-        colOrgPendSel    .setCellValueFactory(new PropertyValueFactory<>("selected"));
-        colOrgPendSel    .setCellFactory(col -> checkBoxCell(OrgWhitelistItem.class));
-        colOrgPendIp     .setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colOrgPendMac    .setCellValueFactory(new PropertyValueFactory<>("mac"));
-        colOrgPendName   .setCellValueFactory(new PropertyValueFactory<>("orgName"));
-        colOrgPendAsn    .setCellValueFactory(new PropertyValueFactory<>("asn"));
-        colOrgPendCountry.setCellValueFactory(new PropertyValueFactory<>("country"));
-        colOrgPendHits   .setCellValueFactory(new PropertyValueFactory<>("hits"));
-        colOrgPendSeen   .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
-        colOrgPendHits.setCellFactory(col -> hitCountCell());
-        orgPending = new FilteredList<>(orgPendingRaw, p -> true);
-        orgPendingTable.setItems(orgPending);
-        orgPendingTable.setPlaceholder(new Label("No pending organizations."));
-    }
-
-    private void setupCasesTable() {
-        colCaseNum       .setCellValueFactory(new PropertyValueFactory<>("caseNumber"));
-        colCaseTitle     .setCellValueFactory(new PropertyValueFactory<>("title"));
-        colCaseStatus    .setCellValueFactory(new PropertyValueFactory<>("status"));
-        colCaseSeverity  .setCellValueFactory(new PropertyValueFactory<>("severity"));
-        colCaseSuspectIp .setCellValueFactory(new PropertyValueFactory<>("suspectIp"));
-        colCaseSuspectMac.setCellValueFactory(new PropertyValueFactory<>("suspectMac"));
-        colCaseThreatType.setCellValueFactory(new PropertyValueFactory<>("threatType"));
-        colCaseAssignedTo.setCellValueFactory(new PropertyValueFactory<>("assignedTo"));
-        colCaseOpenedAt  .setCellValueFactory(new PropertyValueFactory<>("openedAt"));
-
-        colCaseStatus.setCellFactory(col -> new TableCell<>() {
-            @Override protected void updateItem(String val, boolean empty) {
-                super.updateItem(val, empty);
-                if (empty || val == null) { setText(null); setStyle(""); return; }
-                setText(val);
-                setStyle(switch (val) {
-                    case "OPEN"          -> "-fx-text-fill:#ef4444; -fx-font-weight:bold;";
-                    case "INVESTIGATING" -> "-fx-text-fill:#f59e0b;";
-                    case "CLOSED"        -> "-fx-text-fill:#22c55e;";
-                    default              -> "";
-                });
-            }
-        });
-
-        filteredCases = new FilteredList<>(caseEntries, p -> true);
-        casesTable.setItems(filteredCases);
-        casesTable.setPlaceholder(new Label("No forensic cases opened yet."));
-        wireCaseTableDoubleClick();
-        ContextMenu menu = new ContextMenu();
-
-        MenuItem open = new MenuItem("Open Investigation");
-
-        open.setOnAction(e -> {
-
-            CaseItem selected = casesTable.getSelectionModel().getSelectedItem();
-
-            if (selected != null) {
-                openCaseDetail(selected.getId(), selected.getCaseNumber());
-            }
-        });
-
-        MenuItem close = new MenuItem("Close Case");
-
-        close.setOnAction(e -> onCloseCase());
-
-        menu.getItems().addAll(open, close);
-
-        casesTable.setContextMenu(menu);
-    }
-
-    // ── FILTERS ───────────────────────────────────────────────────────────────
-
-    private void applyWlFilter() {
-        String f = tfFilterWlIp.getText().toLowerCase().trim();
-        filteredMyWl.setPredicate(w ->
-                f.isEmpty()
-                || w.getIp().toLowerCase().contains(f)
-                || (w.getMac()   != null && w.getMac().toLowerCase().contains(f))
-                || (w.getLabel() != null && w.getLabel().toLowerCase().contains(f)));
-        orgAccepted.setPredicate(o ->
-                f.isEmpty()
-                || o.getIp().toLowerCase().contains(f)
-                || (o.getOrgName() != null && o.getOrgName().toLowerCase().contains(f)));
-        orgPending.setPredicate(o ->
-                f.isEmpty()
-                || o.getIp().toLowerCase().contains(f)
-                || (o.getOrgName() != null && o.getOrgName().toLowerCase().contains(f)));
-    }
-
-    private void applyCaseFilter() {
-        String status = tfCaseFilterStatus.getText().toLowerCase().trim();
-        String ip     = tfCaseFilterIp.getText().toLowerCase().trim();
-        filteredCases.setPredicate(c -> {
-            if (!status.isEmpty() && !c.getStatus().toLowerCase().contains(status)) return false;
-            if (!ip.isEmpty()     && !c.getSuspectIp().toLowerCase().contains(ip))  return false;
-            return true;
-        });
     }
 
     // ── LOGIN ─────────────────────────────────────────────────────────────────
@@ -347,16 +216,13 @@ public class MainController implements Initializable {
     private void onLogin() {
         String user = tfUsername.getText().trim();
         String pass = pfPassword.getText();
-        investigationPanel.setBackend(backend);
-        caseDetailPanel.setBackend(backend);
-        alertGroupsPanel.setBackend(backend);
-        
+
         if (user.isEmpty() || pass.isEmpty()) {
             lblLoginStatus.setText("Username and password required");
             return;
         }
         lblLoginStatus.setText("Connecting...");
-        backend    = new BackendClient(BACKEND_URL);
+        backend    = new BackendClient(backendUrl());
         dataLoader = new DataLoader(backend);
 
         dataLoader.login(user, pass,
@@ -388,12 +254,8 @@ public class MainController implements Initializable {
                 this::onAlertsLoaded,
                 this::updateStats,
                 msg -> handleSessionError("Alert load failed", msg));
-        dataLoader.loadWhitelist(
-                this::onWhitelistLoaded,
-                msg -> System.err.println("[Desktop] Whitelist load error: " + msg));
-        dataLoader.loadCases(
-                caseEntries::setAll,
-                msg -> System.err.println("[Desktop] Cases load error: " + msg));
+        whitelistManager.reload();
+        caseBoard.reload();
     }
 
     private void onAlertsLoaded(List<AlertItem> items) {
@@ -402,14 +264,14 @@ public class MainController implements Initializable {
         List<AlertItem> capped = items.size() > 2000 ? items.subList(0, 2000) : items;
         allAlerts.setAll(capped);       // ← setAll() wipes first, then adds — no stale rows
         alertManager.rebuildIndex();    // rebuild the (sourceIp,threatType) dedup index
-        alertManager.rebuildAttackers();
+        
     }
 
     // ── LIVE FEED (WEBSOCKET) ─────────────────────────────────────────────────
 
     private void startLiveFeed() {
         try {
-            String wsUrl = BACKEND_URL
+            String wsUrl = backendUrl()
                     .replace("http://",  "ws://")
                     .replace("https://", "wss://")
                     + "/ws/websocket";
@@ -449,7 +311,7 @@ public class MainController implements Initializable {
                 // Already on WS I/O thread — must dispatch to JavaFX thread for UI
                 Platform.runLater(() -> {
                     alertManager.removeById(id);
-                    alertManager.rebuildAttackers();
+                    
                     updateStats(null); // recalculate counters from the now-shorter list
                 });
                 return;
@@ -489,10 +351,7 @@ public class MainController implements Initializable {
 
             alertManager.upsertAlert(item); // deduplicates by (sourceIp, threatType)
 
-            // Throttle attacker-table rebuild to at most once per 5 seconds
-            long now = System.currentTimeMillis();
-            if (now - alertManager.getLastAttackerRebuild() > 5_000)
-                alertManager.rebuildAttackers();
+           
         });
     }
 
@@ -563,139 +422,46 @@ public class MainController implements Initializable {
     @FXML
     private void handleClearAlerts() {
         allAlerts.clear();            // clears Alerts tab   — DB untouched
-        attackers.clear();            // clears Attackers tab — DB untouched
+                    // clears Attackers tab — DB untouched
         alertManager.rebuildIndex();  // reset dedup index so next upsertAlert() works cleanly
         lblLoginStatus.setText("View cleared. Data preserved in database.");
     }
 
-    // ── WHITELIST ACTIONS ─────────────────────────────────────────────────────
+    // ── WHITELIST ACTIONS — thin delegations to WhitelistPanelManager ─────────
 
-    @FXML private void onAddMyWhitelist() {
-        if (!isReady()) return;
-        String ip = tfNewMyWlIp.getText().trim();
-        if (ip.isEmpty()) return;
-        dataLoader.submit("ids-add-wl",
-                () -> backend.addMyWhitelistEntry(ip, tfNewMyWlMac.getText().trim(), tfNewMyWlLabel.getText().trim()),
-                () -> {
-                    tfNewMyWlIp.clear(); tfNewMyWlMac.clear(); tfNewMyWlLabel.clear();
-                    dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {});
-                },
-                msg -> lblLoginStatus.setText("Add failed: " + msg));
-    }
+    @FXML private void onAddMyWhitelist()       { whitelistManager.addMyEntry(); }
+    @FXML private void onDeleteMyWhitelist()    { whitelistManager.deleteSelectedMyEntry(); }
+    @FXML private void onSelectAllFlagged()     { whitelistManager.toggleSelectAllFlagged(); }
+    @FXML private void onAcceptFlagged()        { whitelistManager.acceptSelectedFlagged(); }
+    @FXML private void onRemoveFlagged()        { whitelistManager.clearFlaggedSelection(); }
+    @FXML private void onSelectAllPendingOrgs() { whitelistManager.toggleSelectAllPendingOrgs(); }
+    @FXML private void onAcceptPendingOrgs()    { whitelistManager.acceptSelectedPendingOrgs(); }
+    @FXML private void onAcceptAllPendingOrgs() { whitelistManager.acceptAllPendingOrgs(); }
+    @FXML private void onApproveAllOrgs()       { whitelistManager.acceptAllPendingOrgs(); }
+    @FXML private void onRemovePendingOrg()     { whitelistManager.removeSelectedPendingOrgs(); }
+    @FXML private void onRemoveAcceptedOrg()    { whitelistManager.removeSelectedAcceptedOrg(); }
 
-    @FXML private void onDeleteMyWhitelist() {
-        MyWhitelistItem sel = myWhitelistTable.getSelectionModel().getSelectedItem();
-        if (sel == null || !isReady()) return;
-        dataLoader.submit("ids-del-wl",
-                () -> backend.deleteMyWhitelistEntry(sel.getId()),
-                () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> lblLoginStatus.setText("Delete failed: " + msg));
-    }
+    // ── CASE ACTIONS — thin delegations to CaseBoardManager ──────────────────
 
-    @FXML private void onSelectAllFlagged() {
-        boolean v = cbSelectAllFlagged.isSelected();
-        flaggedIps.forEach(i -> i.setSelected(v));
-        flaggedIpTable.refresh();
-    }
-
-    @FXML private void onAcceptFlagged() {
-        if (!isReady()) return;
-        var selected = flaggedIps.stream().filter(FlaggedIpItem::isSelected).toList();
-        if (selected.isEmpty()) return;
-        dataLoader.submit("ids-accept-flagged",
-                () -> { for (var i : selected)
-                    backend.addMyWhitelistEntry(i.getIp(), i.getMac(), "Accepted from " + i.getThreatType()); },
-                () -> { cbSelectAllFlagged.setSelected(false);
-                    dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}); },
-                msg -> lblLoginStatus.setText("Accept failed: " + msg));
-    }
-
-    @FXML private void onRemoveFlagged() {
-        flaggedIps.forEach(i -> i.setSelected(false));
-        cbSelectAllFlagged.setSelected(false);
-        flaggedIpTable.refresh();
-    }
-
-    @FXML private void onSelectAllPendingOrgs() {
-        boolean v = cbSelectAllPendingOrg.isSelected();
-        orgPending.forEach(i -> i.setSelected(v));
-        orgPendingTable.refresh();
-    }
-
-    @FXML private void onAcceptPendingOrgs() {
-        if (!isReady()) return;
-        var selected = orgPending.stream().filter(OrgWhitelistItem::isSelected).toList();
-        if (selected.isEmpty()) return;
-        dataLoader.submit("ids-approve-orgs",
-                () -> { for (var i : selected) backend.approveOrg(i.getId()); },
-                () -> { cbSelectAllPendingOrg.setSelected(false);
-                    dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}); },
-                msg -> lblLoginStatus.setText("Approve failed: " + msg));
-    }
-
-    @FXML private void onAcceptAllPendingOrgs() {
-        if (!isReady()) return;
-        dataLoader.submit("ids-approve-all",
-                backend::approveAllOrgs,
-                () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> lblLoginStatus.setText("Approve all failed: " + msg));
-    }
-
-    @FXML private void onApproveAllOrgs() { onAcceptAllPendingOrgs(); }
-
-    @FXML private void onRemovePendingOrg() {
-        var selected = orgPending.stream().filter(OrgWhitelistItem::isSelected).toList();
-        if (selected.isEmpty() || !isReady()) return;
-        dataLoader.submit("ids-del-pending",
-                () -> { for (var i : selected) backend.deleteOrgEntry(i.getId()); },
-                () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> lblLoginStatus.setText("Remove failed: " + msg));
-    }
-
-    @FXML private void onRemoveAcceptedOrg() {
-        OrgWhitelistItem sel = orgAcceptedTable.getSelectionModel().getSelectedItem();
-        if (sel == null || !isReady()) return;
-        dataLoader.submit("ids-del-accepted",
-                () -> backend.deleteOrgEntry(sel.getId()),
-                () -> dataLoader.loadWhitelist(this::onWhitelistLoaded, e -> {}),
-                msg -> lblLoginStatus.setText("Remove failed: " + msg));
-    }
-
-    // ── CASE ACTIONS ──────────────────────────────────────────────────────────
-
-    @FXML private void onCreateCase() {
-        if (!isReady()) return;
-        String title = tfNewCaseTitle.getText().trim();
-        if (title.isEmpty()) { lblCaseStatus.setText("Title is required"); return; }
-        dataLoader.submit("ids-create-case",
-                () -> backend.createCase(title, "",
-                        tfNewCaseSuspectIp.getText().trim(),
-                        tfNewCaseSuspectMac.getText().trim(),
-                        cbNewCaseSeverity.getValue(), ""),
-                () -> {
-                    tfNewCaseTitle.clear(); tfNewCaseSuspectIp.clear(); tfNewCaseSuspectMac.clear();
-                    lblCaseStatus.setText("Case created");
-                    dataLoader.loadCases(caseEntries::setAll, e -> {});
-                },
-                msg -> lblCaseStatus.setText("Failed: " + msg));
-    }
-
-    @FXML private void onCloseCase() {
-        if (!isReady()) return;
-        CaseItem sel = casesTable.getSelectionModel().getSelectedItem();
-        if (sel == null) { lblCaseStatus.setText("Select a case first"); return; }
-        dataLoader.submit("ids-close-case",
-                () -> backend.updateCaseStatus(sel.getId(), "CLOSED", sel.getFindings()),
-                () -> {
-                    lblCaseStatus.setText("Case closed");
-                    dataLoader.loadCases(caseEntries::setAll, e -> {});
-                },
-                msg -> lblCaseStatus.setText("Failed: " + msg));
-    }
+    @FXML private void onCreateCase() { caseBoard.createCase(); }
+    @FXML private void onCloseCase()  { caseBoard.closeSelectedCase(); }
 
     // ── HELPERS ───────────────────────────────────────────────────────────────
 
     private boolean isReady() { return backend != null && backend.isLoggedIn(); }
+
+    /**
+     * Backend URL from the Settings tab, falling back to the default.
+     * FIX: tfBackendUrl was FXML-bound but never read — typing a custom
+     * backend address in Settings had no effect; login always went to
+     * localhost:8080.
+     */
+    private String backendUrl() {
+        String url = tfBackendUrl != null ? tfBackendUrl.getText() : null;
+        if (url == null || url.isBlank()) return BACKEND_URL;
+        url = url.trim();
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
 
     
 
@@ -710,79 +476,6 @@ public class MainController implements Initializable {
         if (msg != null && msg.contains("Session expired"))
             backend.invalidateSession();
     }
-
-    // ── CELL FACTORIES ────────────────────────────────────────────────────────
-
-    private <T> TableCell<T, String> cyanCell() {
-        return new TableCell<>() {
-            @Override protected void updateItem(String s, boolean empty) {
-                super.updateItem(s, empty);
-                setText(empty ? null : s);
-                setStyle(empty ? "" : "-fx-text-fill:#00d4ff; -fx-font-weight:bold;");
-            }
-        };
-    }
-
-    private <T> TableCell<T, String> amberCell() {
-        return new TableCell<>() {
-            @Override protected void updateItem(String s, boolean empty) {
-                super.updateItem(s, empty);
-                if (empty || s == null) { setText(null); setStyle(""); return; }
-                setText(s);
-                setStyle("-fx-text-fill:#f59e0b; -fx-font-weight:bold;");
-            }
-        };
-    }
-
-    private <T> TableCell<T, Integer> hitCountCell() {
-        return new TableCell<>() {
-            @Override protected void updateItem(Integer v, boolean empty) {
-                super.updateItem(v, empty);
-                if (empty || v == null) { setText(null); setStyle(""); return; }
-                setText(String.valueOf(v));
-                setStyle(v >= 10
-                        ? "-fx-text-fill:#ef4444; -fx-font-weight:bold;"
-                        : "-fx-text-fill:#f59e0b;");
-            }
-        };
-    }
-
-    @SuppressWarnings("unchecked")
-    private <T> TableCell<T, Boolean> checkBoxCell(Class<T> type) {
-        return new TableCell<>() {
-            private final CheckBox cb = new CheckBox();
-            @Override protected void updateItem(Boolean val, boolean empty) {
-                super.updateItem(val, empty);
-                if (empty) { setGraphic(null); return; }
-                T item = getTableView().getItems().get(getIndex());
-                if (item instanceof FlaggedIpItem f) {
-                    cb.setSelected(f.isSelected());
-                    cb.setOnAction(e -> f.setSelected(cb.isSelected()));
-                } else if (item instanceof OrgWhitelistItem o) {
-                    cb.setSelected(o.isSelected());
-                    cb.setOnAction(e -> o.setSelected(cb.isSelected()));
-                }
-                setGraphic(cb);
-            }
-        };
-    }
-
-    // ── WHITELIST LOADED ──────────────────────────────────────────────────────
-
-    private void onWhitelistLoaded(List<MyWhitelistItem> my,
-                                   List<OrgWhitelistItem> org,
-                                   List<FlaggedIpItem> flagged) {
-        myWlEntries.setAll(my);
-        List<OrgWhitelistItem> accepted = org.stream().filter(OrgWhitelistItem::getApproved).collect(Collectors.toList());
-        List<OrgWhitelistItem> pending  = org.stream().filter(o -> !o.getApproved()).collect(Collectors.toList());
-        orgAcceptedRaw.setAll(accepted);
-        orgPendingRaw .setAll(pending);
-        flaggedIps    .setAll(flagged);
-        lblFlaggedCount   .setText("Flagged IPs — "            + flagged.size() + " pending");
-        lblPendingOrgCount.setText("Pending Organizations — " + pending.size() + " awaiting approval");
-    }
-
-  
 
     private javafx.scene.layout.Pane findRootPane() {
         javafx.scene.Node node = alertTable;
@@ -804,15 +497,7 @@ public class MainController implements Initializable {
                 setOnMouseClicked(e -> openInvestigation(ip));
             }
         });
-        colAtkIp.setCellFactory(col -> new TableCell<>() {
-            @Override protected void updateItem(String ip, boolean empty) {
-                super.updateItem(ip, empty);
-                if (empty || ip == null) { setText(null); setStyle(""); setOnMouseClicked(null); return; }
-                setText(ip);
-                setStyle("-fx-text-fill:#00d4ff; -fx-font-weight:bold; -fx-cursor:hand;");
-                setOnMouseClicked(e -> openInvestigation(ip));
-            }
-        });
+        
     }
 
     
@@ -866,26 +551,7 @@ public class MainController implements Initializable {
 
         wireIpColumnClick();
     }
-    private void wireCaseTableDoubleClick() {
 
-        casesTable.setRowFactory(tv -> {
-
-            TableRow<CaseItem> row = new TableRow<>();
-
-            row.setOnMouseClicked(event -> {
-
-                if (event.getClickCount() == 2 && !row.isEmpty()) {
-
-                    CaseItem item = row.getItem();
-
-                    openCaseDetail(item.getId(), item.getCaseNumber());
-                }
-            });
-
-            return row;
-        });
-        
-    }
     /** Shows exactly one side panel and hides the other two. */
     private void showOnlySidePanel(javafx.scene.Node toShow) {
         for (javafx.scene.Node n : sidePanelStack.getChildren()) {

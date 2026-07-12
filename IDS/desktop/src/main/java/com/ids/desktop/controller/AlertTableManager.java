@@ -1,32 +1,26 @@
 package com.ids.desktop.controller;
 
 import com.ids.desktop.model.AlertItem;
-import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 public class AlertTableManager {
 
     private final TableView<AlertItem> alertTable;
-    private final TableView<AlertItem> attackerTable;
 
     private final TextField        tfIp, tfMac, tfType;
     private final ComboBox<String> cbSeverity, cbProtocol;
-    private final TextField        tfFilterAtkIp;
 
-    // Canonical lists owned by MainController — we only read/mutate, never replace
+    // Canonical list owned by MainController — we only read/mutate, never replace
     private final ObservableList<AlertItem> allAlerts;
-    private final ObservableList<AlertItem> attackers;
 
     private FilteredList<AlertItem> filteredAlerts;
-    private long lastAttackerRebuild = 0L;
 
     // ── Dedup index: (sourceIp\0threatType) → AlertItem ──────────────────────
     // Kept in sync with allAlerts at all times.
@@ -35,23 +29,17 @@ public class AlertTableManager {
 
     public AlertTableManager(
             TableView<AlertItem> alertTable,
-            TableView<AlertItem> attackerTable,
             TextField tfIp, TextField tfMac, TextField tfType,
             ComboBox<String> cbSeverity, ComboBox<String> cbProtocol,
-            TextField tfFilterAtkIp,
-            ObservableList<AlertItem> allAlerts,
-            ObservableList<AlertItem> attackers) {
+            ObservableList<AlertItem> allAlerts) {
 
         this.alertTable    = alertTable;
-        this.attackerTable = attackerTable;
         this.tfIp          = tfIp;
         this.tfMac         = tfMac;
         this.tfType        = tfType;
         this.cbSeverity    = cbSeverity;
         this.cbProtocol    = cbProtocol;
-        this.tfFilterAtkIp = tfFilterAtkIp;
         this.allAlerts     = allAlerts;
-        this.attackers     = attackers;
     }
 
     public void setup(
@@ -65,16 +53,12 @@ public class AlertTableManager {
             TableColumn<AlertItem, String>  colRequestType,
             TableColumn<AlertItem, Integer> colPackets,
             TableColumn<AlertItem, String>  colDetails,
-            TableColumn<AlertItem, Integer> colOccurrences,
-            TableColumn<AlertItem, String>  colAtkIp,
-            TableColumn<AlertItem, String>  colAtkMac,
-            TableColumn<AlertItem, Integer> colAtkCount) {
+            TableColumn<AlertItem, Integer> colOccurrences) {
 
         setupAlertColumns(colTimestamp, colSeverity, colThreatType,
                 colSourceIp, colSourceMac, colDestIp,
                 colProtocol, colRequestType, colPackets, colDetails, colOccurrences);
 
-        setupAttackerColumns(colAtkIp, colAtkMac, colAtkCount);
         setupFilters();
     }
 
@@ -132,34 +116,6 @@ public class AlertTableManager {
         alertTable.setPlaceholder(new Label("No alerts yet."));
     }
 
-    private void setupAttackerColumns(
-            TableColumn<AlertItem, String>  colAtkIp,
-            TableColumn<AlertItem, String>  colAtkMac,
-            TableColumn<AlertItem, Integer> colAtkCount) {
-
-        colAtkIp   .setCellValueFactory(new PropertyValueFactory<>("sourceIp"));
-        colAtkMac  .setCellValueFactory(new PropertyValueFactory<>("sourceMac"));
-        colAtkCount.setCellValueFactory(new PropertyValueFactory<>("packetCount"));
-
-        colAtkIp.setCellFactory(col -> new TableCell<>() {
-            @Override protected void updateItem(String val, boolean empty) {
-                super.updateItem(val, empty);
-                setText(empty ? null : val);
-                setStyle(empty ? "" : "-fx-text-fill:#ef4444; -fx-font-weight:bold;");
-            }
-        });
-
-        FilteredList<AlertItem> filteredAttackers = new FilteredList<>(attackers, p -> true);
-        attackerTable.setItems(filteredAttackers);
-        attackerTable.setPlaceholder(new Label("No threat actors detected yet."));
-
-        tfFilterAtkIp.textProperty().addListener((o, ov, nv) -> {
-            String f = nv.toLowerCase().trim();
-            filteredAttackers.setPredicate(a ->
-                    f.isEmpty() || a.getSourceIp().toLowerCase().contains(f));
-        });
-    }
-
     private void setupFilters() {
         tfIp.textProperty()      .addListener((o, ov, nv) -> applyFilter());
         tfMac.textProperty()     .addListener((o, ov, nv) -> applyFilter());
@@ -213,12 +169,10 @@ public class AlertTableManager {
         String key = keyOf(incoming.getSourceIp(), incoming.getThreatType());
         AlertItem existing = summaryIndex.get(key);
         if (existing != null) {
-            // Update in place — JavaFX observes the property changes automatically
             existing.setOccurrences(incoming.getOccurrences());
             existing.setTimestamp(incoming.getTimestamp());
             existing.setFirstSeen(incoming.getFirstSeen());
-            existing.setId(incoming.getId()); // keep id current
-            // Bubble to top so most-recently-active alert is always row 0
+            existing.setId(incoming.getId());
             allAlerts.remove(existing);
             allAlerts.add(0, existing);
         } else {
@@ -228,51 +182,14 @@ public class AlertTableManager {
     }
 
     /**
-     * FIX: Remove an alert from the table by its database summary id.
-     *
-     * Called when the WebSocket delivers a deletion event:
-     *   {"id": 42}  on /topic/alerts/deleted
-     *
-     * Why removeIf instead of a Map lookup:
-     *   The summaryIndex is keyed by (sourceIp, threatType).  We don't have those
-     *   fields in the deletion payload — only the id.  removeIf is O(n) but n is
-     *   at most 2000 rows, so it is fast enough.  An id→key secondary index would
-     *   make it O(1) but adds complexity that is not needed at this scale.
-     *
-     * Must be called on the JavaFX thread.
+     * Remove an alert from the table by its database summary id.
+     * Called when the WebSocket delivers a deletion event: {"id": 42} on
+     * /topic/alerts/deleted. Must be called on the JavaFX thread.
      */
     public void removeById(long id) {
-        // Remove from the index first so upsertAlert doesn't resurrect the row
         summaryIndex.entrySet().removeIf(e -> e.getValue().getId() == id);
-        // Remove from the observable list — JavaFX TableView updates automatically
         allAlerts.removeIf(a -> a.getId() == id);
     }
-
-    // ── ATTACKER REBUILD ──────────────────────────────────────────────────────
-
-    public void rebuildAttackers() {
-        Map<String, Long> counts = allAlerts.stream()
-                .filter(a -> a.getSourceIp() != null && !a.getSourceIp().isEmpty())
-                .collect(Collectors.groupingBy(AlertItem::getSourceIp, Collectors.counting()));
-
-        List<AlertItem> top = counts.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .limit(20)
-                .map(e -> {
-                    String mac = allAlerts.stream()
-                            .filter(a -> e.getKey().equals(a.getSourceIp()))
-                            .map(AlertItem::getSourceMac)
-                            .findFirst().orElse("");
-                    return new AlertItem("", "", "", e.getKey(), mac, "", "", "",
-                            e.getValue().intValue(), "");
-                })
-                .collect(Collectors.toList());
-
-        attackers.setAll(top);
-        lastAttackerRebuild = System.currentTimeMillis();
-    }
-
-    public long getLastAttackerRebuild() { return lastAttackerRebuild; }
 
     public void clearFilters() {
         tfIp.clear(); tfMac.clear(); tfType.clear();

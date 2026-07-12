@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -39,8 +39,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class PortKnockingDetector implements Detector {
 
-    private static final int KNOCK_SEQUENCE_MIN = 3; // min distinct ports to count as a sequence
-    private static final long WINDOW_MS = 10_000L; // sequence must complete within 10 s
+    // Tunable via ids-detection.properties; defaults preserve prior behavior.
+    private static final int KNOCK_SEQUENCE_MIN =
+        com.ids.config.DetectionTuning.getInt("knock.sequence.min", 3); // min distinct ports to count as a sequence
+    private static final long WINDOW_MS =
+        com.ids.config.DetectionTuning.getLong("knock.window.ms", 10_000L); // sequence must complete within 10 s
     private static final long MIN_KNOCK_GAP_MS = 100L; // knocks are deliberate — not a flood
     private static final long COOLDOWN_MS = 15_000L; // suppress repeat alerts per IP
 
@@ -48,10 +51,10 @@ public class PortKnockingDetector implements Detector {
     private final Map<String, List<long[]>> knockLog = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     private final NetworkWhitelist whitelist;
 
-    public PortKnockingDetector(AlertManager alertManager, NetworkWhitelist whitelist) {
+    public PortKnockingDetector(AlertSink alertManager, NetworkWhitelist whitelist) {
         this.alertManager = alertManager;
         this.whitelist = whitelist;
     }

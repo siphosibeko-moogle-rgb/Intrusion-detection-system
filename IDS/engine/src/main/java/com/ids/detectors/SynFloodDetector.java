@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.ThreatEvent;
 import com.ids.models.ThreatEvent.Severity;
@@ -83,10 +83,10 @@ public class SynFloodDetector implements Detector {
     private final Map<String, DestRecord> destinations = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
 	
 
-    public SynFloodDetector(AlertManager alertManager) {
+    public SynFloodDetector(AlertSink alertManager) {
         this.alertManager = alertManager;
     }
 

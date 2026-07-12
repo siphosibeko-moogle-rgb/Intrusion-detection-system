@@ -2,6 +2,7 @@ package com.ids.service;
 
 import com.ids.model.Alert;
 import com.ids.model.AlertSummary;
+import com.ids.repository.AlertGroupProjection;
 import com.ids.repository.AlertRepository;
 import com.ids.repository.AlertSummaryRepository;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -85,6 +86,7 @@ public class AlertService {
         stats.put("high",     repo.countBySeverity("HIGH"));
         stats.put("medium",   repo.countBySeverity("MEDIUM"));
         stats.put("low",      repo.countBySeverity("LOW"));
+        stats.put("info",     repo.countBySeverity("INFO"));
 
         Map<String, Long> byType = new LinkedHashMap<>();
         repo.countByThreatType().forEach(r -> byType.put((String) r[0], (Long) r[1]));
@@ -212,14 +214,14 @@ public class AlertService {
      * count; fine at dashboard scale — 1 + N queries for N <= 15 attackers).
      */
     public List<Map<String, Object>> getThreatActors(int limit) {
-        List<Object[]> ranked = repo.topAttackers(); // already ORDER BY COUNT(a) DESC
+        List<AlertGroupProjection> ranked = repo.findAlertGroupsBySourceIp(); // one row per IP, already correctly aggregated
         List<Map<String, Object>> actors = new ArrayList<>();
         int rank = 1;
-        for (Object[] row : ranked) {
+        for (AlertGroupProjection row : ranked) {
             if (actors.size() >= limit) break;
-            String ip = (String) row[0];
+            String ip = row.getSourceIp();
             IpProfileDTO profile = buildIpProfile(ip);
-            if (profile == null) continue; // shouldn't happen, but don't let one bad row 500 the endpoint
+            if (profile == null) continue;
 
             Map<String, Object> actor = new LinkedHashMap<>();
             actor.put("rank", rank++);

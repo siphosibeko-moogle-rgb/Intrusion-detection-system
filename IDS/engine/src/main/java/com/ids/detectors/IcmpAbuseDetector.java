@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.PacketRecord;
 import com.ids.models.ThreatEvent;
@@ -19,9 +19,9 @@ public class IcmpAbuseDetector implements Detector {
     private final Map<String, PacketRecord> records = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
 
-    public IcmpAbuseDetector(AlertManager alertManager) {
+    public IcmpAbuseDetector(AlertSink alertManager) {
         this.alertManager = alertManager;
     }
 

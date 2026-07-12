@@ -67,6 +67,15 @@ public class AlertController {
         a.setWindowMs   (body.get("windowMs") != null
                 ? ((Number) body.get("windowMs")).longValue() : 0L);
 
+        // Confidence/provenance metadata — optional so older engine builds
+        // (which don't send these fields) keep ingesting cleanly.
+        a.setConfidenceScore(body.get("confidenceScore") != null
+                ? ((Number) body.get("confidenceScore")).intValue() : null);
+        a.setConfidenceReason((String) body.get("confidenceReason"));
+        a.setDetectedBy      ((String) body.get("detectedBy"));
+        a.setRuleVersion     ((String) body.get("ruleVersion"));
+        a.setMitreAttack     ((String) body.get("mitreAttack"));
+
         String ts = (String) body.get("timestamp");
         if (ts != null) {
             ts = ts.replaceAll("(\\.\\d{3})\\d+", "$1");
@@ -170,6 +179,33 @@ public class AlertController {
         ws.convertAndSend("/topic/alerts-cleared", Map.of("cleared", true));
 
         return ResponseEntity.ok(Map.of("message", "All alerts cleared"));
+    }
+
+    /**
+     * Analyst verification — mark a raw alert CONFIRMED or FALSE_POSITIVE.
+     * PATCH /api/alerts/{id}/verify   body: {"status": "...", "verifiedBy": "..."}
+     *
+     * False-positive labels accumulate per rule (detectedBy + ruleVersion),
+     * giving a measurable precision figure per detector and labelled data
+     * for any future ML scoring.
+     */
+    @PatchMapping("/{id}/verify")
+    public ResponseEntity<?> verify(@PathVariable Long id,
+                                    @RequestBody Map<String, String> body) {
+        String status = body.get("status");
+        if (!"CONFIRMED".equals(status) && !"FALSE_POSITIVE".equals(status)
+                && !"UNVERIFIED".equals(status)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "status must be CONFIRMED, FALSE_POSITIVE or UNVERIFIED"));
+        }
+        return alertRepository.findById(id)
+            .map(a -> {
+                a.setVerificationStatus(status);
+                a.setVerifiedBy(body.getOrDefault("verifiedBy", "analyst"));
+                a.setVerifiedAt("UNVERIFIED".equals(status) ? null : Instant.now());
+                return ResponseEntity.ok((Object) alertRepository.save(a));
+            })
+            .orElse(ResponseEntity.notFound().build());
     }
 
     /**

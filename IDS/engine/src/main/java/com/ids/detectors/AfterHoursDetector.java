@@ -1,6 +1,6 @@
 package com.ids.detectors;
 
-import com.ids.alerts.AlertManager;
+import com.ids.alerts.AlertSink;
 import com.ids.models.PacketContext;
 import com.ids.models.PacketRecord;
 import com.ids.models.ThreatEvent;
@@ -29,7 +29,7 @@ public class AfterHoursDetector implements Detector {
     private final Map<String, PacketRecord> activityMap = new ConcurrentHashMap<>();
     private final Map<String, Long> lastAlerts = new ConcurrentHashMap<>();
 
-    private final AlertManager alertManager;
+    private final AlertSink alertManager;
     // FIX: replaced the local String subnetPrefix + extractPrefix() with the
     // shared NetworkWhitelist instance. The old local check was
     //   ip.startsWith(subnetPrefix) || ip.startsWith("10.") || ip.startsWith("192.168.")
@@ -43,7 +43,7 @@ public class AfterHoursDetector implements Detector {
     private final ZoneId timezone;
     private final boolean alertWeekends;
 
-    public AfterHoursDetector(AlertManager alertManager,
+    public AfterHoursDetector(AlertSink alertManager,
                                NetworkWhitelist whitelist,
                                int workStartHour,
                                int workEndHour,
