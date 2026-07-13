@@ -94,11 +94,13 @@ public class PacketRecord {
     }
     
     
-    public int getTotalPacketCount() {
+    // synchronized: these fields are written under the monitor in
+    // addTimestamp()/addBytes(); unsynchronized reads could see stale/torn values.
+    public synchronized int getTotalPacketCount() {
         return totalPackets;
     }
 
-    public long getTotalSessionBytes() {
+    public synchronized long getTotalSessionBytes() {
         return totalInboundBytes + totalOutboundBytes;
     }
 
@@ -225,7 +227,9 @@ public synchronized int getUniquePortCount(long now) {
   return scannedPorts.size();
 }
 
-public long getWindowDurationMs(long now) {
+// synchronized: clean() mutates timestamps; every other accessor holds the
+// monitor, and concurrent drain workers hit the same record.
+public synchronized long getWindowDurationMs(long now) {
     clean(timestamps, now, WINDOW_2S);
     if (timestamps.isEmpty()) return 0;
     return now - timestamps.get(0);

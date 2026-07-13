@@ -19,7 +19,9 @@ public class AlertManager implements Runnable, AlertSink {
 
     private final BlockingQueue<ThreatEvent> queue = new LinkedBlockingQueue<>();
     private volatile boolean running = true;
-    private int totalAlerts = 0;
+    // AtomicInteger: written on the alert thread, read from the shutdown hook.
+    private final java.util.concurrent.atomic.AtomicInteger totalAlerts =
+            new java.util.concurrent.atomic.AtomicInteger(0);
 
     private final String logFile;
     private final String backendUrl;
@@ -40,6 +42,11 @@ public class AlertManager implements Runnable, AlertSink {
 
     private final ConcurrentHashMap<String, Long> cooldowns = new ConcurrentHashMap<>();
     private static final long COOLDOWN_MS = 3_000L;
+
+    // Periodic prune of cooldowns — one entry per type:srcIP:dstPort key means
+    // a spoofed-source flood grows the map unbounded exactly during an attack.
+    private static final long PRUNE_INTERVAL_MS = 60_000L;
+    private volatile long lastPruneTime = System.currentTimeMillis();
 
     public AlertManager(String logFile, String backendUrl) {
         this.logFile     = logFile;
@@ -88,6 +95,12 @@ public class AlertManager implements Runnable, AlertSink {
         Long last = cooldowns.get(key);
         if (last != null && (now - last) < COOLDOWN_MS) return;
         cooldowns.put(key, now);
+
+        if (now - lastPruneTime > PRUNE_INTERVAL_MS) {
+            lastPruneTime = now;
+            cooldowns.entrySet().removeIf(e -> now - e.getValue() > COOLDOWN_MS * 10);
+        }
+
         queue.offer(event);
     }
 
@@ -101,7 +114,7 @@ public class AlertManager implements Runnable, AlertSink {
                     printConsole(e);
                     writeLog(e);
                     postToBackend(e);
-                    totalAlerts++;
+                    totalAlerts.incrementAndGet();
                 }
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
@@ -190,6 +203,6 @@ public class AlertManager implements Runnable, AlertSink {
     }
 
     public int getTotalAlerts() {
-        return totalAlerts;
+        return totalAlerts.get();
     }
 }

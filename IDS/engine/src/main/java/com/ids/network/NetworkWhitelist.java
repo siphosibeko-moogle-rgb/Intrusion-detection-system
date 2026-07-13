@@ -11,7 +11,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public class NetworkWhitelist {
 
     private String  backendUrl   = "http://localhost:8080";
-    private String  backendToken = "";
+    // volatile: replaced by the re-login path (see getWithAuthRetry) while
+    // drain workers and the refresh scheduler read it concurrently.
+    private volatile String backendToken = "";
+
+    // Re-login hook (set by the engine). Used to mint a fresh JWT when the
+    // backend starts returning 401 after token expiry.
+    private volatile java.util.function.Supplier<String> tokenSupplier;
 
     private int     workStart    = 8;
     private int     workEnd      = 18;
@@ -58,12 +64,12 @@ public class NetworkWhitelist {
         .connectTimeout(Duration.ofSeconds(5))
         .build();
 
-    private final Set<String> trustedIps =
-        Collections.newSetFromMap(new ConcurrentHashMap<>());
-    private final Set<String> trustedMacs =
-        Collections.newSetFromMap(new ConcurrentHashMap<>());
-    private final Set<String> approvedOrgIps =
-        Collections.newSetFromMap(new ConcurrentHashMap<>());
+    // Volatile refs to immutable snapshots, swapped atomically on refresh
+    // (build-then-swap). Readers always see a complete old or new state —
+    // never a half-cleared one while the backend HTTP calls are in flight.
+    private volatile Set<String> trustedIps     = Set.of();
+    private volatile Set<String> trustedMacs    = Set.of();
+    private volatile Set<String> approvedOrgIps = Set.of();
 
     // CIDR-shaped org-whitelist entries ("104.16.0.0/13" for Cloudflare,
     // "8.8.8.0/24", AWS ranges, …). Populated from the SAME backend
@@ -71,8 +77,11 @@ public class NetworkWhitelist {
     // is a CIDR block and the engine picks it up on the next refresh. This
     // is what makes trusted infrastructure (CDN/cloud provider ranges)
     // manageable through the application instead of per-IP or in code.
-    private final java.util.concurrent.CopyOnWriteArrayList<Cidr> approvedOrgCidrs =
-        new java.util.concurrent.CopyOnWriteArrayList<>();
+    private volatile List<Cidr> approvedOrgCidrs = List.of();
+
+    // Snapshot types returned by the backend loaders (null on any failure).
+    private record TrustedDevices(Set<String> ips, Set<String> macs) {}
+    private record OrgWhitelist(Set<String> ips, List<Cidr> cidrs) {}
 
     /** IPv4 CIDR block. parse() returns null for anything malformed. */
     private record Cidr(long network, long mask) {
@@ -114,17 +123,32 @@ public class NetworkWhitelist {
         this.backendUrl   = backendUrl;
         this.backendToken = backendToken != null ? backendToken : "";
         loadProperties();
-        loadTrustedDevicesFromBackend();
-        loadApprovedOrgsFromBackend();
+        refresh();
+    }
+
+    /** Lets the engine hand us a re-login callback for JWT expiry (401). */
+    public void setTokenSupplier(java.util.function.Supplier<String> tokenSupplier) {
+        this.tokenSupplier = tokenSupplier;
     }
 
     public void refresh() {
-        trustedIps.clear();
-        trustedMacs.clear();
-        approvedOrgIps.clear();
-        approvedOrgCidrs.clear();
-        loadTrustedDevicesFromBackend();
-        loadApprovedOrgsFromBackend();
+        // Build-then-swap: never clear the live sets before the backend
+        // answers. On any load failure, keep the previous complete state
+        // instead of running with an empty whitelist.
+        TrustedDevices devices = loadTrustedDevicesFromBackend();
+        if (devices != null) {
+            trustedIps  = devices.ips();
+            trustedMacs = devices.macs();
+        } else {
+            System.err.println("[Whitelist] Trusted device refresh failed — keeping previous state");
+        }
+        OrgWhitelist orgs = loadApprovedOrgsFromBackend();
+        if (orgs != null) {
+            approvedOrgIps   = orgs.ips();
+            approvedOrgCidrs = orgs.cidrs();
+        } else {
+            System.err.println("[Whitelist] Org whitelist refresh failed — keeping previous state");
+        }
     }
 
     private void loadProperties() {
@@ -247,60 +271,80 @@ public class NetworkWhitelist {
         }
     }
 
-    private void loadTrustedDevicesFromBackend() {
+    // Sends an authenticated GET. On 401 (expired JWT), re-logs-in ONCE via
+    // tokenSupplier and retries ONCE with the new token — no loop.
+    private HttpResponse<String> getWithAuthRetry(String path) throws Exception {
+        HttpResponse<String> response = sendAuthedGet(path);
+        if (response.statusCode() == 401 && tokenSupplier != null) {
+            System.err.println("[Whitelist] Backend returned HTTP 401 — token likely expired, re-authenticating");
+            String newToken = tokenSupplier.get();
+            if (newToken == null || newToken.isBlank()) {
+                System.err.println("[Whitelist] RE-LOGIN FAILED — cannot refresh whitelist, keeping previous state");
+                return response;
+            }
+            backendToken = newToken;
+            response = sendAuthedGet(path);
+        }
+        return response;
+    }
+
+    private HttpResponse<String> sendAuthedGet(String path) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(backendUrl + path))
+            .header("Authorization", backendToken)
+            .timeout(Duration.ofSeconds(5))
+            .GET()
+            .build();
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Builds a fresh snapshot from the backend; null on any failure (caller keeps old state). */
+    private TrustedDevices loadTrustedDevicesFromBackend() {
         if (backendToken.isBlank()) {
             System.err.println("[Whitelist] No auth token — skipping trusted device load");
-            return;
+            return null;
         }
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(backendUrl + "/api/my-whitelist"))
-                .header("Authorization", backendToken)
-                .timeout(Duration.ofSeconds(5))
-                .GET()
-                .build();
-
-            HttpResponse<String> response = httpClient.send(request,
-                HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = getWithAuthRetry("/api/my-whitelist");
 
             if (response.statusCode() == 200) {
                 com.fasterxml.jackson.databind.ObjectMapper mapper =
                     new com.fasterxml.jackson.databind.ObjectMapper();
                 com.fasterxml.jackson.databind.JsonNode arr =
                     mapper.readTree(response.body());
+                Set<String> ips  = new HashSet<>();
+                Set<String> macs = new HashSet<>();
                 for (com.fasterxml.jackson.databind.JsonNode node : arr) {
                     String ip  = node.path("ip").asText(null);
                     String mac = node.path("mac").asText(null);
-                    if (ip  != null && !ip.isBlank())  addTrustedIp(ip);
-                    if (mac != null && !mac.isBlank()) addTrustedMac(mac);
+                    if (ip  != null && !ip.isBlank())  ips.add(normalize(ip));
+                    if (mac != null && !mac.isBlank()) macs.add(mac.toLowerCase().trim());
                 }
                 System.out.printf("[Whitelist] Loaded %d trusted devices%n", arr.size());
+                return new TrustedDevices(Collections.unmodifiableSet(ips),
+                                          Collections.unmodifiableSet(macs));
             } else {
                 System.err.println("[Whitelist] Backend returned HTTP " + response.statusCode());
             }
         } catch (Exception e) {
             System.err.println("[Whitelist] Could not load trusted devices: " + e.getMessage());
         }
+        return null;
     }
 
-    private void loadApprovedOrgsFromBackend() {
-        if (backendToken.isBlank()) return;
+    /** Builds a fresh snapshot from the backend; null on any failure (caller keeps old state). */
+    private OrgWhitelist loadApprovedOrgsFromBackend() {
+        if (backendToken.isBlank()) return null;
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(backendUrl + "/api/org-whitelist"))
-                .header("Authorization", backendToken)
-                .timeout(Duration.ofSeconds(5))
-                .GET()
-                .build();
-
-            HttpResponse<String> response = httpClient.send(request,
-                HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = getWithAuthRetry("/api/org-whitelist");
 
             if (response.statusCode() == 200) {
                 com.fasterxml.jackson.databind.ObjectMapper mapper =
                     new com.fasterxml.jackson.databind.ObjectMapper();
                 com.fasterxml.jackson.databind.JsonNode arr =
                     mapper.readTree(response.body());
+                Set<String> ips   = new HashSet<>();
+                List<Cidr>  cidrs = new ArrayList<>();
                 int count = 0;
                 for (com.fasterxml.jackson.databind.JsonNode node : arr) {
                     boolean approved = node.path("approved").asBoolean(false);
@@ -313,28 +357,33 @@ public class NetworkWhitelist {
                         if (n.contains("/")) {
                             Cidr cidr = Cidr.parse(n);
                             if (cidr != null) {
-                                approvedOrgCidrs.add(cidr);
+                                cidrs.add(cidr);
                                 count++;
                             } else {
                                 System.err.println("[Whitelist] IGNORING invalid "
                                     + "CIDR in org whitelist: '" + n + "'");
                             }
                         } else {
-                            approvedOrgIps.add(n);
+                            ips.add(n);
                             count++;
                         }
                     }
                 }
                 System.out.printf("[Whitelist] Loaded %d approved org IPs/ranges "
-                    + "(%d CIDR blocks)%n", count, approvedOrgCidrs.size());
+                    + "(%d CIDR blocks)%n", count, cidrs.size());
+                return new OrgWhitelist(Collections.unmodifiableSet(ips),
+                                        Collections.unmodifiableList(cidrs));
             }
         } catch (Exception e) {
             System.err.println("[Whitelist] Could not load org whitelist: " + e.getMessage());
         }
+        return null;
     }
 
     public boolean isTrusted(String ip) {
-        if (ip == null) return true;
+        // Fail CLOSED: a packet whose source IP couldn't be parsed must not
+        // be treated as trusted — that was a bypass for malformed/crafted packets.
+        if (ip == null) return false;
         String n = normalize(ip);
         return isSystemAddress(n) || trustedIps.contains(n);
     }
@@ -386,12 +435,20 @@ public class NetworkWhitelist {
         return normalizedIp.startsWith(entry);
     }
 
-    public void addTrustedIp(String ip) {
-        if (ip != null && !ip.isBlank()) trustedIps.add(normalize(ip));
+    // Copy-on-write: the live sets are immutable snapshots (see field decl),
+    // so adds rebuild and swap. synchronized to avoid lost concurrent adds.
+    public synchronized void addTrustedIp(String ip) {
+        if (ip == null || ip.isBlank()) return;
+        Set<String> next = new HashSet<>(trustedIps);
+        next.add(normalize(ip));
+        trustedIps = Collections.unmodifiableSet(next);
     }
 
-    public void addTrustedMac(String mac) {
-        if (mac != null && !mac.isBlank()) trustedMacs.add(mac.toLowerCase().trim());
+    public synchronized void addTrustedMac(String mac) {
+        if (mac == null || mac.isBlank()) return;
+        Set<String> next = new HashSet<>(trustedMacs);
+        next.add(mac.toLowerCase().trim());
+        trustedMacs = Collections.unmodifiableSet(next);
     }
     private boolean isSystemAddress(String n) {
         return n.startsWith("127.") || n.equals("::1")

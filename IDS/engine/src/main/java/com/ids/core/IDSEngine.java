@@ -59,6 +59,11 @@ public class IDSEngine {
     // Now: one handle per relevant interface, each with its own capture thread.
     private final List<PcapHandle> captureHandles = new CopyOnWriteArrayList<>();
 
+    // Futures of the capture-loop tasks. shutdown() must wait for these to
+    // exit the native pcap loop before close() — closing a handle mid-loop()
+    // can segfault libpcap.
+    private final List<Future<?>> captureFutures = new CopyOnWriteArrayList<>();
+
     //Packet queue
     // All capture threads push here; drain workers pop and process.
     private final BlockingQueue<Packet> packetQueue = new ArrayBlockingQueue<>(10_000);
@@ -115,6 +120,10 @@ public class IDSEngine {
 
         // 3. Whitelist — needs token from step 1
         whitelist = new NetworkWhitelist(backendUrl, backendToken);
+        // Re-login hook: the backend JWT expires (~24h); on HTTP 401 the
+        // whitelist re-authenticates once via this supplier instead of
+        // silently running on stale trust data forever.
+        whitelist.setTokenSupplier(() -> loginToBackend(backendUrl));
         scheduler.scheduleAtFixedRate(whitelist::refresh, 30, 30, TimeUnit.SECONDS);
 
         // 4. All detectors
@@ -124,12 +133,12 @@ public class IDSEngine {
         nmapDetector            = new NmapScanDetector(alertManager, whitelist);
         whitelistDetector = new WhitelistViolationDetector(alertManager, whitelist);
         arpDetector             = new ArpSpoofingDetector(alertManager, whitelist.getGateway());
-        dnsDetector             = dnsDetector = new DnsTunnelingDetector(alertManager, whitelist);
+        dnsDetector             = new DnsTunnelingDetector(alertManager, whitelist);
         exfilDetector           = new DataExfiltrationDetector(alertManager, whitelist);
         afterHoursDetector      = new AfterHoursDetector(alertManager, whitelist,
                                           whitelist.getWorkStartHour(), whitelist.getWorkEndHour(),
                                           whitelist.getWorkTimezone(), whitelist.isWeekendAlert());
-        bruteForceDetector      = bruteForceDetector = new BruteForceDetector(alertManager, whitelist);
+        bruteForceDetector      = new BruteForceDetector(alertManager, whitelist);
         beaconingDetector       = new BeaconingDetector(alertManager, whitelist);
         // was new LateralMovementDetector(alertManager, subnet) — subnet
         // is a leftover from before this detector added whitelist.isInternal()
@@ -143,7 +152,7 @@ public class IDSEngine {
         // whitelist.isTrustedDhcpServer(mac) allowlist check inside the detector.
         rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist);
         fileTransferDetector = new FileTransferDetector(alertManager, whitelist);
-        	dataStagingDetector =  dataStagingDetector = new DataStagingDetector(alertManager, whitelist);
+        dataStagingDetector     = new DataStagingDetector(alertManager, whitelist);
         ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, whitelist);
         // FIX: all three below gained whitelist.isTrustedScanner() exemptions
         // (so your own vuln scanner / sqlmap / automation doesn't page you)
@@ -205,7 +214,7 @@ public class IDSEngine {
         }
 
         for (PcapHandle handle : captureHandles) {
-            workers.submit(() -> runCaptureLoop(handle));
+            captureFutures.add(workers.submit(() -> runCaptureLoop(handle)));
         }
 
         // Periodic tasks
@@ -384,7 +393,9 @@ public class IDSEngine {
                 udpPayload = extractUdpPayload(packet);
             }
 
-            // Global whitelist gate — trusted source IPs skip behavioral detectors
+            // Global whitelist gate — trusted source IPs skip behavioral detectors.
+            // A null srcIp is NOT trusted (isTrusted fails closed) — the packet
+            // falls through to the detectors, which null-check internally.
             if (whitelist.isTrusted(ctx.getSrcIp())) return;
 
             // Behavioral detectors
@@ -469,7 +480,12 @@ public class IDSEngine {
         }
 
         try {
-            String body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
+            // Serialize via Jackson — string concatenation broke the request
+            // body whenever the password contained a quote or backslash.
+            com.fasterxml.jackson.databind.node.ObjectNode loginNode = mapper.createObjectNode();
+            loginNode.put("username", username);
+            loginNode.put("password", password);
+            String body = mapper.writeValueAsString(loginNode);
             java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
             java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
                 .uri(java.net.URI.create(backendUrl + "/api/auth/login"))
@@ -511,14 +527,25 @@ public class IDSEngine {
     private void shutdown() {
         System.out.println("\n[IDS] Shutting down...");
         scheduler.shutdownNow();
-        workers.shutdownNow();
-       
+
+        // Order matters: breakLoop() → wait for capture threads to leave the
+        // native pcap loop → close(). Closing while a thread is inside loop()
+        // can segfault libpcap.
         for (PcapHandle handle : captureHandles) {
             if (handle != null && handle.isOpen()) {
                 try { handle.breakLoop(); } catch (NotOpenException ignored) {}
+            }
+        }
+        for (Future<?> f : captureFutures) {
+            try { f.get(2, TimeUnit.SECONDS); } catch (Exception ignored) {}
+        }
+        for (PcapHandle handle : captureHandles) {
+            if (handle != null && handle.isOpen()) {
                 handle.close();
             }
         }
+        workers.shutdownNow();
+
         alertManager.stop();
         if (alertThread != null) {
             try { alertThread.join(5_000); } catch (InterruptedException ignored) {}
