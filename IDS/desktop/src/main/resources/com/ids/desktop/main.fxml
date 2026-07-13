@@ -172,9 +172,11 @@
                                         <TableColumn fx:id="colFlagMac"
                                                      text="MAC"/>
                                         <TableColumn fx:id="colFlagThreat"
-                                                     text="Threat"/>
+                                                     text="Threats"/>
+                                        <TableColumn fx:id="colFlagSeverity"
+                                                     text="Severity"/>
                                         <TableColumn fx:id="colFlagProto"
-                                                     text="Protocol"/>
+                                                     text="Protocols"/>
                                         <TableColumn fx:id="colFlagHits"
                                                      text="Hits"/>
                                         <TableColumn fx:id="colFlagSeen"

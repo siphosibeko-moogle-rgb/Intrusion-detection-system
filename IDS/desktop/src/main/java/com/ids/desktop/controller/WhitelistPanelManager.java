@@ -135,6 +135,7 @@ public class WhitelistPanelManager {
                                TableColumn<FlaggedIpItem, String>  colIp,
                                TableColumn<FlaggedIpItem, String>  colMac,
                                TableColumn<FlaggedIpItem, String>  colThreat,
+                               TableColumn<FlaggedIpItem, String>  colSeverity,
                                TableColumn<FlaggedIpItem, String>  colProto,
                                TableColumn<FlaggedIpItem, Integer> colHits,
                                TableColumn<FlaggedIpItem, String>  colSeen,
@@ -143,16 +144,18 @@ public class WhitelistPanelManager {
         this.cbSelectAllFlagged = cbSelectAll;
         this.lblFlaggedCount    = lblCount;
 
-        colSel   .setCellValueFactory(new PropertyValueFactory<>("selected"));
-        colSel   .setCellFactory(col -> checkBoxCell());
-        colIp    .setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colMac   .setCellValueFactory(new PropertyValueFactory<>("mac"));
-        colThreat.setCellValueFactory(new PropertyValueFactory<>("threatType"));
-        colProto .setCellValueFactory(new PropertyValueFactory<>("protocol"));
-        colHits  .setCellValueFactory(new PropertyValueFactory<>("hits"));
-        colSeen  .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
-        colThreat.setCellFactory(col -> amberCell());
-        colHits  .setCellFactory(col -> hitCountCell());
+        colSel     .setCellValueFactory(new PropertyValueFactory<>("selected"));
+        colSel     .setCellFactory(col -> checkBoxCell());
+        colIp      .setCellValueFactory(new PropertyValueFactory<>("ip"));
+        colMac     .setCellValueFactory(new PropertyValueFactory<>("mac"));
+        colThreat  .setCellValueFactory(new PropertyValueFactory<>("threatType"));
+        colSeverity.setCellValueFactory(new PropertyValueFactory<>("severity"));
+        colProto   .setCellValueFactory(new PropertyValueFactory<>("protocol"));
+        colHits    .setCellValueFactory(new PropertyValueFactory<>("hits"));
+        colSeen    .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
+        colThreat  .setCellFactory(col -> amberCell());
+        colSeverity.setCellFactory(col -> severityCell());
+        colHits    .setCellFactory(col -> hitCountCell());
         table.setItems(flaggedIps);
         table.setPlaceholder(new Label("No flagged IPs."));
     }
@@ -299,6 +302,17 @@ public class WhitelistPanelManager {
                 super.updateItem(s, empty);
                 setText(empty ? null : s);
                 setStyle(empty ? "" : "-fx-text-fill:#00d4ff; -fx-font-weight:bold;");
+            }
+        };
+    }
+
+    private <T> TableCell<T, String> severityCell() {
+        return new TableCell<>() {
+            @Override protected void updateItem(String s, boolean empty) {
+                super.updateItem(s, empty);
+                if (empty || s == null) { setText(null); setStyle(""); return; }
+                setText(s);
+                setStyle(com.ids.desktop.util.SeverityStyle.toStyle(s));
             }
         };
     }

@@ -219,13 +219,26 @@ public class AlertController {
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                 .withZone(ZoneId.systemDefault());
         for (Object[] row : rows) {
+            // Native query (see findFlaggedIpSummary) returns SQL types:
+            // timestamp arrives as java.sql.Timestamp, not Instant.
+            Object rawTs = row[5];
+            Instant lastSeen = rawTs instanceof java.sql.Timestamp ts
+                    ? ts.toInstant() : (Instant) rawTs;
+            String severity = switch (((Number) row[6]).intValue()) {
+                case 4  -> "CRITICAL";
+                case 3  -> "HIGH";
+                case 2  -> "MEDIUM";
+                case 1  -> "LOW";
+                default -> "INFO";
+            };
             result.add(Map.of(
                 "ip",         row[0] != null ? row[0] : "",
                 "mac",        row[1] != null ? row[1] : "",
                 "threatType", row[2] != null ? row[2] : "",
                 "protocol",   row[3] != null ? row[3] : "",
                 "hits",       ((Number) row[4]).intValue(),
-                "lastSeen",   fmt.format((Instant) row[5])
+                "lastSeen",   fmt.format(lastSeen),
+                "severity",   severity
             ));
         }
         return ResponseEntity.ok(result);

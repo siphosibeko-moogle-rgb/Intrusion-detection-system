@@ -363,6 +363,7 @@ public class BackendClient {
                 textOf(n, "mac", ""),
                 textOf(n, "threatType", ""),
                 textOf(n, "protocol", ""),
+                textOf(n, "severity", ""),
                 intOf(n, "hits", 0),
                 textOf(n, "lastSeen", "")
             ));

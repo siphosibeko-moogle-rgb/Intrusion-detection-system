@@ -66,7 +66,7 @@ public class MainController implements Initializable {
     // Flagged IPs
     @FXML private TableView<FlaggedIpItem>            flaggedIpTable;
     @FXML private TableColumn<FlaggedIpItem, Boolean> colFlagSel;
-    @FXML private TableColumn<FlaggedIpItem, String>  colFlagIp, colFlagMac, colFlagThreat, colFlagProto, colFlagSeen;
+    @FXML private TableColumn<FlaggedIpItem, String>  colFlagIp, colFlagMac, colFlagThreat, colFlagSeverity, colFlagProto, colFlagSeen;
     @FXML private TableColumn<FlaggedIpItem, Integer> colFlagHits;
     @FXML private CheckBox cbSelectAllFlagged;
     @FXML private Label    lblFlaggedCount;
@@ -163,7 +163,7 @@ public class MainController implements Initializable {
                 cbNewTnSuppressBeaconing);
         whitelistManager.bindFlaggedIps(flaggedIpTable,
                 colFlagSel, colFlagIp, colFlagMac, colFlagThreat,
-                colFlagProto, colFlagHits, colFlagSeen,
+                colFlagSeverity, colFlagProto, colFlagHits, colFlagSeen,
                 cbSelectAllFlagged, lblFlaggedCount);
 
         caseBoard = new CaseBoardManager(
