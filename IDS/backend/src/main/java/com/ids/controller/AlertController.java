@@ -1,8 +1,10 @@
 package com.ids.controller;
 
+import com.ids.entity.OrgWhitelistEntry;
 import com.ids.model.Alert;
 import com.ids.model.AlertSummary;
 import com.ids.service.AlertService;
+import com.ids.service.OrgWhitelistService;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -31,15 +33,18 @@ public class AlertController {
     private final AlertRepository         alertRepository;
     private final AlertSummaryRepository  summaryRepository;
     private final SimpMessagingTemplate   ws;
+    private final OrgWhitelistService     orgWhitelistService;
 
     public AlertController(AlertService alertService,
                            AlertRepository alertRepository,
                            AlertSummaryRepository summaryRepository,
-                           SimpMessagingTemplate ws) {
-        this.alertService      = alertService;
-        this.alertRepository   = alertRepository;
-        this.summaryRepository = summaryRepository;
-        this.ws                = ws;
+                           SimpMessagingTemplate ws,
+                           OrgWhitelistService orgWhitelistService) {
+        this.alertService        = alertService;
+        this.alertRepository     = alertRepository;
+        this.summaryRepository   = summaryRepository;
+        this.ws                  = ws;
+        this.orgWhitelistService = orgWhitelistService;
     }
 
     /**
@@ -218,6 +223,15 @@ public class AlertController {
         List<Map<String, Object>> result = new ArrayList<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                 .withZone(ZoneId.systemDefault());
+
+        // Organization discovery: org_whitelist is the lookup cache — one
+        // batch fetch for every flagged IP. Public IPs with no cached row get
+        // an async lookup queued (never blocks this request); their name
+        // shows as "Unknown" until the next reload finds the cached result.
+        List<String> ips = new ArrayList<>();
+        for (Object[] row : rows) if (row[0] != null) ips.add(row[0].toString());
+        Map<String, OrgWhitelistEntry> orgByIp = orgWhitelistService.getByIps(ips);
+
         for (Object[] row : rows) {
             // Native query (see findFlaggedIpSummary) returns SQL types:
             // timestamp arrives as java.sql.Timestamp, not Instant.
@@ -231,15 +245,36 @@ public class AlertController {
                 case 1  -> "LOW";
                 default -> "INFO";
             };
-            result.add(Map.of(
-                "ip",         row[0] != null ? row[0] : "",
-                "mac",        row[1] != null ? row[1] : "",
-                "threatType", row[2] != null ? row[2] : "",
-                "protocol",   row[3] != null ? row[3] : "",
-                "hits",       ((Number) row[4]).intValue(),
-                "lastSeen",   fmt.format(lastSeen),
-                "severity",   severity
-            ));
+
+            String ip = row[0] != null ? row[0].toString() : "";
+            OrgWhitelistEntry org = orgByIp.get(ip);
+            String organization, asn = "", country = "";
+            if (org != null && org.getOrgName() != null && !org.getOrgName().isBlank()) {
+                // Cached — reuse, never re-query (a cached "Unknown" counts:
+                // the lookup already failed once, don't hammer the API).
+                organization = org.getOrgName();
+                asn     = org.getAsn()     != null ? org.getAsn()     : "";
+                country = org.getCountry() != null ? org.getCountry() : "";
+            } else if (OrgWhitelistService.isPrivateIp(ip)) {
+                // RFC1918/loopback has no owning organization to look up.
+                organization = "Private (LAN)";
+            } else {
+                organization = "Unknown";
+                orgWhitelistService.lookupAsync(ip);
+            }
+
+            Map<String, Object> entry = new java.util.LinkedHashMap<>();
+            entry.put("ip",           ip);
+            entry.put("mac",          row[1] != null ? row[1] : "");
+            entry.put("threatType",   row[2] != null ? row[2] : "");
+            entry.put("protocol",     row[3] != null ? row[3] : "");
+            entry.put("hits",         ((Number) row[4]).intValue());
+            entry.put("lastSeen",     fmt.format(lastSeen));
+            entry.put("severity",     severity);
+            entry.put("organization", organization);
+            entry.put("asn",          asn);
+            entry.put("country",      country);
+            result.add(entry);
         }
         return ResponseEntity.ok(result);
     }

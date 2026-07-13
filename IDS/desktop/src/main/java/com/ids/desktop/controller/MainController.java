@@ -66,7 +66,7 @@ public class MainController implements Initializable {
     // Flagged IPs
     @FXML private TableView<FlaggedIpItem>            flaggedIpTable;
     @FXML private TableColumn<FlaggedIpItem, Boolean> colFlagSel;
-    @FXML private TableColumn<FlaggedIpItem, String>  colFlagIp, colFlagMac, colFlagThreat, colFlagSeverity, colFlagProto, colFlagSeen;
+    @FXML private TableColumn<FlaggedIpItem, String>  colFlagIp, colFlagMac, colFlagOrg, colFlagThreat, colFlagSeverity, colFlagProto, colFlagSeen;
     @FXML private TableColumn<FlaggedIpItem, Integer> colFlagHits;
     @FXML private CheckBox cbSelectAllFlagged;
     @FXML private Label    lblFlaggedCount;
@@ -162,7 +162,7 @@ public class MainController implements Initializable {
                 tfNewTnCidr, tfNewTnProvider, tfNewTnCategory,
                 cbNewTnSuppressBeaconing);
         whitelistManager.bindFlaggedIps(flaggedIpTable,
-                colFlagSel, colFlagIp, colFlagMac, colFlagThreat,
+                colFlagSel, colFlagIp, colFlagMac, colFlagOrg, colFlagThreat,
                 colFlagSeverity, colFlagProto, colFlagHits, colFlagSeen,
                 cbSelectAllFlagged, lblFlaggedCount);
 
@@ -334,10 +334,17 @@ public class MainController implements Initializable {
 
     private void startPolling() {
         scheduler.scheduleAtFixedRate(() -> {
-            if (isReady()) dataLoader.loadAlertSummaries(
-                    this::onAlertsLoaded,
-                    this::updateStats,
-                    msg -> handleSessionError("Poll failed", msg));
+            if (isReady()) {
+                dataLoader.loadAlertSummaries(
+                        this::onAlertsLoaded,
+                        this::updateStats,
+                        msg -> handleSessionError("Poll failed", msg));
+                // Keep Flagged IPs current: new detections fold into their
+                // row, and async org lookups (backend fills org_whitelist in
+                // the background) appear without a manual Refresh. Checkbox
+                // selections survive — see onWhitelistLoaded.
+                whitelistManager.reloadWhitelists();
+            }
         }, 30, 30, TimeUnit.SECONDS);
     }
 

@@ -171,6 +171,9 @@
                                                      text="IP"/>
                                         <TableColumn fx:id="colFlagMac"
                                                      text="MAC"/>
+                                        <TableColumn fx:id="colFlagOrg"
+                                                     text="Organization"
+                                                     prefWidth="150"/>
                                         <TableColumn fx:id="colFlagThreat"
                                                      text="Threats"/>
                                         <TableColumn fx:id="colFlagSeverity"

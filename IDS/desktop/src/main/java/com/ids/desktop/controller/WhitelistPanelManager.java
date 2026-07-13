@@ -134,6 +134,7 @@ public class WhitelistPanelManager {
                                TableColumn<FlaggedIpItem, Boolean> colSel,
                                TableColumn<FlaggedIpItem, String>  colIp,
                                TableColumn<FlaggedIpItem, String>  colMac,
+                               TableColumn<FlaggedIpItem, String>  colOrg,
                                TableColumn<FlaggedIpItem, String>  colThreat,
                                TableColumn<FlaggedIpItem, String>  colSeverity,
                                TableColumn<FlaggedIpItem, String>  colProto,
@@ -148,11 +149,13 @@ public class WhitelistPanelManager {
         colSel     .setCellFactory(col -> checkBoxCell());
         colIp      .setCellValueFactory(new PropertyValueFactory<>("ip"));
         colMac     .setCellValueFactory(new PropertyValueFactory<>("mac"));
+        colOrg     .setCellValueFactory(new PropertyValueFactory<>("organization"));
         colThreat  .setCellValueFactory(new PropertyValueFactory<>("threatType"));
         colSeverity.setCellValueFactory(new PropertyValueFactory<>("severity"));
         colProto   .setCellValueFactory(new PropertyValueFactory<>("protocol"));
         colHits    .setCellValueFactory(new PropertyValueFactory<>("hits"));
         colSeen    .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
+        colOrg     .setCellFactory(col -> organizationCell());
         colThreat  .setCellFactory(col -> amberCell());
         colSeverity.setCellFactory(col -> severityCell());
         colHits    .setCellFactory(col -> hitCountCell());
@@ -163,15 +166,31 @@ public class WhitelistPanelManager {
     // ── LOADING / FILTERING ─────────────────────────────────────────────────
 
     public void reload() {
-        dataLoader.get().loadWhitelist(this::onWhitelistLoaded, e -> {});
+        reloadWhitelists();
         dataLoader.get().loadTrustedNetworks(trustedNetworks::setAll,
                 msg -> status.accept("Trusted networks load failed: " + msg));
+    }
+
+    /** Trusted devices + flagged IPs only — polled every 30s so the Flagged
+     *  IPs table updates itself (new detections, async org lookups landing)
+     *  without clearing the trusted-networks table's row selection. */
+    public void reloadWhitelists() {
+        dataLoader.get().loadWhitelist(this::onWhitelistLoaded, e -> {});
     }
 
     public void onWhitelistLoaded(List<MyWhitelistItem> my,
                                   List<FlaggedIpItem> flagged) {
         myWlEntries.setAll(my);
-        flaggedIps .setAll(flagged);
+        // Carry checkbox selections across the periodic reload — otherwise
+        // the 30s auto-refresh would silently untick rows mid-triage.
+        java.util.Set<String> selectedIps = new java.util.HashSet<>();
+        for (FlaggedIpItem i : flaggedIps) if (i.isSelected()) selectedIps.add(i.getIp());
+        flaggedIps.setAll(flagged);
+        if (!selectedIps.isEmpty()) {
+            for (FlaggedIpItem i : flaggedIps) {
+                if (selectedIps.contains(i.getIp())) i.setSelected(true);
+            }
+        }
         lblFlaggedCount.setText("Flagged IPs — " + flagged.size() + " pending");
     }
 
@@ -302,6 +321,34 @@ public class WhitelistPanelManager {
                 super.updateItem(s, empty);
                 setText(empty ? null : s);
                 setStyle(empty ? "" : "-fx-text-fill:#00d4ff; -fx-font-weight:bold;");
+            }
+        };
+    }
+
+    /** Organization column: real org names in blue, "Unknown"/"Private (LAN)"
+     *  muted; ASN + country surface as a tooltip rather than extra columns. */
+    private TableCell<FlaggedIpItem, String> organizationCell() {
+        return new TableCell<>() {
+            @Override protected void updateItem(String s, boolean empty) {
+                super.updateItem(s, empty);
+                if (empty || s == null || s.isBlank()) {
+                    setText(null); setTooltip(null); setStyle(""); return;
+                }
+                setText(s);
+                boolean known = !"Unknown".equals(s) && !"Private (LAN)".equals(s);
+                setStyle(known ? "-fx-text-fill:#60a5fa; -fx-font-weight:bold;"
+                               : "-fx-text-fill:#6b7280;");
+                Tooltip tip = null;
+                if (getIndex() >= 0 && getIndex() < getTableView().getItems().size()) {
+                    FlaggedIpItem row = getTableView().getItems().get(getIndex());
+                    StringBuilder sb = new StringBuilder();
+                    if (row.getAsn()     != null && !row.getAsn().isBlank())
+                        sb.append("ASN: ").append(row.getAsn());
+                    if (row.getCountry() != null && !row.getCountry().isBlank())
+                        sb.append(sb.length() > 0 ? "\n" : "").append("Country: ").append(row.getCountry());
+                    if (sb.length() > 0) tip = new Tooltip(sb.toString());
+                }
+                setTooltip(tip);
             }
         };
     }
