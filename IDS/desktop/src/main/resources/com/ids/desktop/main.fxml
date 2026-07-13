@@ -56,13 +56,6 @@
                     </VBox>
                 </Tab>
 
-                <!-- LIVE FEED -->
-                <Tab text="Live Feed">
-                    <VBox spacing="10" style="-fx-padding:10;">
-                        <Button text="Clear Feed" onAction="#onClearFeed"/>
-                        <ListView fx:id="liveFeedList" VBox.vgrow="ALWAYS"/>
-                    </VBox>
-                </Tab>
                 <!-- WHITELIST TAB -->
                 <Tab text="Whitelist">
                     <VBox spacing="10" style="-fx-padding:10;">
@@ -72,194 +65,87 @@
                                        promptText="Filter IP / MAC / Label"/>
                         </HBox>
 
-                        <!-- OUTER SPLIT: top=MyWhitelist, bottom=OrgWhitelist -->
+                        <!-- Trusted Devices + Flagged IPs share the full page -->
                         <SplitPane orientation="VERTICAL"
                                    VBox.vgrow="ALWAYS"
                                    dividerPositions="0.5">
 
-                            <!-- TOP HALF: MY WHITELIST split into Trusted + Flagged -->
-                            <SplitPane orientation="VERTICAL"
-                                       dividerPositions="0.45">
-
-                                <!-- SECTION 1: TRUSTED DEVICES -->
-                                <VBox spacing="6" style="-fx-padding:6;">
-                                    <Label text="My Whitelist — Trusted Devices"
-                                           style="-fx-font-weight:bold;"/>
-                                    <TableView fx:id="myWhitelistTable"
-                                               VBox.vgrow="ALWAYS">
-                                        <columns>
-                                            <TableColumn fx:id="colMyWlIp"
-                                                         text="IP"/>
-                                            <TableColumn fx:id="colMyWlMac"
-                                                         text="MAC"/>
-                                            <TableColumn fx:id="colMyWlLabel"
-                                                         text="Label"/>
-                                            <TableColumn fx:id="colMyWlAddedAt"
-                                                         text="Added At"/>
-                                        </columns>
-                                    </TableView>
-                                    <HBox spacing="8">
-                                        <TextField fx:id="tfNewMyWlIp"
-                                                   promptText="IP"/>
-                                        <TextField fx:id="tfNewMyWlMac"
-                                                   promptText="MAC"/>
-                                        <TextField fx:id="tfNewMyWlLabel"
-                                                   promptText="Label (e.g. Router)"/>
-                                        <Button text="Add"
-                                                onAction="#onAddMyWhitelist"/>
-                                        <Button text="Delete Selected"
-                                                onAction="#onDeleteMyWhitelist"/>
-                                    </HBox>
-                                </VBox>
-
-                                <!-- SECTION 2: FLAGGED IPs -->
-                                <VBox spacing="6" style="-fx-padding:6;">
-                                    <HBox spacing="10">
-                                        <Label fx:id="lblFlaggedCount"
-                                               text="Flagged IPs — 0 pending"
-                                               style="-fx-font-weight:bold;
-                                                      -fx-text-fill:#f59e0b;"/>
-                                        <Pane HBox.hgrow="ALWAYS"/>
-                                        <CheckBox fx:id="cbSelectAllFlagged"
-                                                  text="Select All"
-                                                  onAction="#onSelectAllFlagged"/>
-                                    </HBox>
-                                    <TableView fx:id="flaggedIpTable"
-                                               VBox.vgrow="ALWAYS">
-                                        <columns>
-                                            <TableColumn fx:id="colFlagSel"
-                                                         text="✓"
-                                                         prefWidth="30"/>
-                                            <TableColumn fx:id="colFlagIp"
-                                                         text="IP"/>
-                                            <TableColumn fx:id="colFlagMac"
-                                                         text="MAC"/>
-                                            <TableColumn fx:id="colFlagThreat"
-                                                         text="Threat"/>
-                                            <TableColumn fx:id="colFlagProto"
-                                                         text="Protocol"/>
-                                            <TableColumn fx:id="colFlagHits"
-                                                         text="Hits"/>
-                                            <TableColumn fx:id="colFlagSeen"
-                                                         text="Last Seen"/>
-                                        </columns>
-                                    </TableView>
-                                    <HBox spacing="8">
-                                        <Button text="Accept Selected"
-                                                onAction="#onAcceptFlagged"
-                                                style="-fx-text-fill:white;
-                                                       -fx-background-color:#22c55e;"/>
-                                        <Button text="Remove Selected"
-                                                onAction="#onRemoveFlagged"
-                                                style="-fx-text-fill:white;
-                                                       -fx-background-color:#ef4444;"/>
-                                    </HBox>
-                                </VBox>
-
-                            </SplitPane>
-                            <!-- END inner SplitPane (MyWhitelist) -->
-
-                            <!-- BOTTOM HALF: ORG WHITELIST split into Accepted + Pending -->
-                            <VBox spacing="6"
-                                  style="-fx-padding:6;"
-                                  VBox.vgrow="ALWAYS">
-
-                                <!-- ORG ACCEPTED -->
-                                <Label text="Org Whitelist — Accepted Organizations"
-                                       style="-fx-font-weight:bold;
-                                              -fx-text-fill:#22c55e;"/>
-                                <TableView fx:id="orgAcceptedTable"
-                                           prefHeight="150">
+                            <!-- SECTION 1: TRUSTED DEVICES -->
+                            <VBox spacing="6" style="-fx-padding:6;">
+                                <Label text="My Whitelist — Trusted Devices"
+                                       style="-fx-font-weight:bold;"/>
+                                <TableView fx:id="myWhitelistTable"
+                                           VBox.vgrow="ALWAYS">
                                     <columns>
-                                        <TableColumn fx:id="colOrgAccIp"
-                                                     text="IP"
-                                                     prefWidth="120"/>
-                                        <TableColumn fx:id="colOrgAccName"
-                                                     text="Organization"
-                                                     prefWidth="180"/>
-                                        <TableColumn fx:id="colOrgAccAsn"
-                                                     text="ASN"
-                                                     prefWidth="120"/>
-                                        <TableColumn fx:id="colOrgAccCountry"
-                                                     text="Country"
-                                                     prefWidth="80"/>
-                                        <TableColumn fx:id="colOrgAccHits"
-                                                     text="Hits"
-                                                     prefWidth="60"/>
-                                        <TableColumn fx:id="colOrgAccSeen"
-                                                     text="Last Seen"
-                                                     prefWidth="140"/>
+                                        <TableColumn fx:id="colMyWlIp"
+                                                     text="IP"/>
+                                        <TableColumn fx:id="colMyWlMac"
+                                                     text="MAC"/>
+                                        <TableColumn fx:id="colMyWlLabel"
+                                                     text="Label"/>
+                                        <TableColumn fx:id="colMyWlAddedAt"
+                                                     text="Added At"/>
                                     </columns>
                                 </TableView>
                                 <HBox spacing="8">
-                                    <Button text="Remove Selected"
-                                            onAction="#onRemoveAcceptedOrg"
-                                            style="-fx-background-color:#ef4444;
-                                                   -fx-text-fill:white;"/>
+                                    <TextField fx:id="tfNewMyWlIp"
+                                               promptText="IP"/>
+                                    <TextField fx:id="tfNewMyWlMac"
+                                               promptText="MAC"/>
+                                    <TextField fx:id="tfNewMyWlLabel"
+                                               promptText="Label (e.g. Router)"/>
+                                    <Button text="Add"
+                                            onAction="#onAddMyWhitelist"/>
+                                    <Button text="Delete Selected"
+                                            onAction="#onDeleteMyWhitelist"/>
                                 </HBox>
+                            </VBox>
 
-                                <Separator/>
-
-                                <!-- ORG PENDING -->
-                                <HBox spacing="10" alignment="CENTER_LEFT">
-                                    <Label fx:id="lblPendingOrgCount"
-                                           text="Pending Organizations — 0 awaiting approval"
+                            <!-- SECTION 2: FLAGGED IPs -->
+                            <VBox spacing="6" style="-fx-padding:6;">
+                                <HBox spacing="10">
+                                    <Label fx:id="lblFlaggedCount"
+                                           text="Flagged IPs — 0 pending"
                                            style="-fx-font-weight:bold;
                                                   -fx-text-fill:#f59e0b;"/>
                                     <Pane HBox.hgrow="ALWAYS"/>
-                                    <CheckBox fx:id="cbSelectAllPendingOrg"
+                                    <CheckBox fx:id="cbSelectAllFlagged"
                                               text="Select All"
-                                              onAction="#onSelectAllPendingOrgs"/>
+                                              onAction="#onSelectAllFlagged"/>
                                 </HBox>
-                                <TableView fx:id="orgPendingTable"
-                                           prefHeight="150">
+                                <TableView fx:id="flaggedIpTable"
+                                           VBox.vgrow="ALWAYS">
                                     <columns>
-                                        <TableColumn fx:id="colOrgPendSel"
+                                        <TableColumn fx:id="colFlagSel"
                                                      text="✓"
                                                      prefWidth="30"/>
-                                        <TableColumn fx:id="colOrgPendIp"
-                                                     text="IP"
-                                                     prefWidth="120"/>
-                                        <TableColumn fx:id="colOrgPendMac"
-                                                     text="MAC"
-                                                     prefWidth="120"/>
-                                        <TableColumn fx:id="colOrgPendName"
-                                                     text="Organization"
-                                                     prefWidth="180"/>
-                                        <TableColumn fx:id="colOrgPendAsn"
-                                                     text="ASN"
-                                                     prefWidth="120"/>
-                                        <TableColumn fx:id="colOrgPendCountry"
-                                                     text="Country"
-                                                     prefWidth="80"/>
-                                        <TableColumn fx:id="colOrgPendHits"
-                                                     text="Hits"
-                                                     prefWidth="60"/>
-                                        <TableColumn fx:id="colOrgPendSeen"
-                                                     text="Last Seen"
-                                                     prefWidth="140"/>
+                                        <TableColumn fx:id="colFlagIp"
+                                                     text="IP"/>
+                                        <TableColumn fx:id="colFlagMac"
+                                                     text="MAC"/>
+                                        <TableColumn fx:id="colFlagThreat"
+                                                     text="Threat"/>
+                                        <TableColumn fx:id="colFlagProto"
+                                                     text="Protocol"/>
+                                        <TableColumn fx:id="colFlagHits"
+                                                     text="Hits"/>
+                                        <TableColumn fx:id="colFlagSeen"
+                                                     text="Last Seen"/>
                                     </columns>
                                 </TableView>
                                 <HBox spacing="8">
                                     <Button text="Accept Selected"
-                                            onAction="#onAcceptPendingOrgs"
-                                            style="-fx-background-color:#22c55e;
-                                                   -fx-text-fill:white;"/>
-                                    <Button text="Accept All"
-                                            onAction="#onAcceptAllPendingOrgs"
-                                            style="-fx-background-color:#3b82f6;
-                                                   -fx-text-fill:white;"/>
+                                            onAction="#onAcceptFlagged"
+                                            style="-fx-text-fill:white;
+                                                   -fx-background-color:#22c55e;"/>
                                     <Button text="Remove Selected"
-                                            onAction="#onRemovePendingOrg"
-                                            style="-fx-background-color:#ef4444;
-                                                   -fx-text-fill:white;"/>
+                                            onAction="#onRemoveFlagged"
+                                            style="-fx-text-fill:white;
+                                                   -fx-background-color:#ef4444;"/>
                                 </HBox>
-
                             </VBox>
-                            <!-- END OrgWhitelist VBox -->
 
                         </SplitPane>
-                        <!-- END outer SplitPane -->
 
                     </VBox>
                 </Tab>

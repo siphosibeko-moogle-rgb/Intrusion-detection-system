@@ -17,7 +17,6 @@ import com.ids.desktop.model.AlertItem;
 import com.ids.desktop.model.CaseItem;
 import com.ids.desktop.model.FlaggedIpItem;
 import com.ids.desktop.model.MyWhitelistItem;
-import com.ids.desktop.model.OrgWhitelistItem;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -226,29 +225,6 @@ public class BackendClient {
         delete("/api/my-whitelist/" + id);
     }
 
-    // ── ORG WHITELIST ─────────────────────────────────────────────────────
-
-    public List<OrgWhitelistItem> fetchOrgWhitelist() throws IOException {
-        List<OrgWhitelistItem> list = new ArrayList<>();
-        for (JsonNode n : mapper.readTree(get("/api/org-whitelist"))) {
-            list.add(new OrgWhitelistItem(
-                longOf(n, "id", 0L),
-                textOf(n, "ip", ""),
-                textOf(n, "orgName", ""),
-                textOf(n, "asn", ""),
-                textOf(n, "country", ""),
-                intOf(n, "hits", 0),
-                boolOf(n, "approved", false),
-                formatTs(textOf(n, "lastSeen", ""))
-            ));
-        }
-        return list;
-    }
-
-    public void approveOrg(long id) throws IOException { patch("/api/org-whitelist/" + id + "/approve"); }
-    public void approveAllOrgs() throws IOException { patch("/api/org-whitelist/approve-all"); }
-    public void deleteOrgEntry(long id) throws IOException { delete("/api/org-whitelist/" + id); }
-
     // ── FORENSIC CASES ────────────────────────────────────────────────────
 
     public List<CaseItem> fetchCases() throws IOException {
@@ -402,16 +378,6 @@ public class BackendClient {
         }
     }
 
-    private void patch(String path) throws IOException {
-        try (Response resp = executeWithRetry(() -> new Request.Builder()
-                .url(baseUrl + path)
-                .addHeader("Authorization", "Bearer " + jwtToken)
-                .patch(RequestBody.create("{}", MediaType.get("application/json")))
-                .build())) {
-            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
-        }
-    }
-
     public void delete(String path) throws IOException {
         try (Response resp = executeWithRetry(() -> new Request.Builder()
                 .url(baseUrl + path)
@@ -443,6 +409,7 @@ public class BackendClient {
         JsonNode n = node.get(field);
         return (n != null && !n.isNull() && !n.isMissingNode()) ? n.asBoolean() : defaultValue;
     }
+
 
     private String formatTs(String iso) {
         try {

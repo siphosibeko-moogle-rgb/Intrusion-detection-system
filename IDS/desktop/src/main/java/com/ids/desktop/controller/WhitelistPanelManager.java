@@ -2,7 +2,6 @@ package com.ids.desktop.controller;
 
 import com.ids.desktop.model.FlaggedIpItem;
 import com.ids.desktop.model.MyWhitelistItem;
-import com.ids.desktop.model.OrgWhitelistItem;
 import com.ids.desktop.service.BackendClient;
 
 import javafx.collections.FXCollections;
@@ -15,12 +14,11 @@ import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
- * Owns the three whitelist-related views (My Whitelist, Org Whitelist
- * accepted/pending, Flagged IPs): table wiring, filtering, and every
- * add/approve/remove action against the backend.
+ * Owns the two whitelist views (My Whitelist — Trusted Devices, and
+ * Flagged IPs): table wiring, filtering, and every add/accept/remove
+ * action against the backend.
  *
  * Extracted from MainController (same decomposition pattern as
  * AlertTableManager / DashboardPanel). MainController keeps the @FXML
@@ -31,6 +29,12 @@ import java.util.stream.Collectors;
  *
  * BackendClient and DataLoader are recreated on every login, so they are
  * passed as Suppliers rather than captured once.
+ *
+ * NOTE: the org-whitelist UI (accepted/pending organization tables) was
+ * removed from the desktop in July 2026. The backend org-whitelist API
+ * still exists and the ENGINE still loads approved org IPs/CIDR ranges
+ * from it into its detection whitelist — manage those entries via the
+ * backend API directly.
  */
 public class WhitelistPanelManager {
 
@@ -39,13 +43,10 @@ public class WhitelistPanelManager {
     private final BooleanSupplier         ready;
     private final Consumer<String>        status;
 
-    private final ObservableList<MyWhitelistItem>  myWlEntries    = FXCollections.observableArrayList();
-    private final ObservableList<OrgWhitelistItem> orgAcceptedRaw = FXCollections.observableArrayList();
-    private final ObservableList<OrgWhitelistItem> orgPendingRaw  = FXCollections.observableArrayList();
-    private final ObservableList<FlaggedIpItem>    flaggedIps     = FXCollections.observableArrayList();
+    private final ObservableList<MyWhitelistItem> myWlEntries = FXCollections.observableArrayList();
+    private final ObservableList<FlaggedIpItem>   flaggedIps  = FXCollections.observableArrayList();
 
-    private FilteredList<MyWhitelistItem>  filteredMyWl;
-    private FilteredList<OrgWhitelistItem> orgAccepted, orgPending;
+    private FilteredList<MyWhitelistItem> filteredMyWl;
 
     // Controls handed over from MainController via bind*()
     private TableView<MyWhitelistItem>  myWhitelistTable;
@@ -54,10 +55,6 @@ public class WhitelistPanelManager {
     private TableView<FlaggedIpItem> flaggedIpTable;
     private CheckBox cbSelectAllFlagged;
     private Label    lblFlaggedCount;
-
-    private TableView<OrgWhitelistItem> orgAcceptedTable, orgPendingTable;
-    private CheckBox cbSelectAllPendingOrg;
-    private Label    lblPendingOrgCount;
 
     public WhitelistPanelManager(Supplier<DataLoader> dataLoader,
                                  Supplier<BackendClient> backend,
@@ -123,53 +120,6 @@ public class WhitelistPanelManager {
         table.setPlaceholder(new Label("No flagged IPs."));
     }
 
-    public void bindOrgTables(TableView<OrgWhitelistItem> acceptedTable,
-                              TableColumn<OrgWhitelistItem, String>  colAccIp,
-                              TableColumn<OrgWhitelistItem, String>  colAccName,
-                              TableColumn<OrgWhitelistItem, String>  colAccAsn,
-                              TableColumn<OrgWhitelistItem, String>  colAccCountry,
-                              TableColumn<OrgWhitelistItem, Integer> colAccHits,
-                              TableColumn<OrgWhitelistItem, String>  colAccSeen,
-                              TableView<OrgWhitelistItem> pendingTable,
-                              TableColumn<OrgWhitelistItem, Boolean> colPendSel,
-                              TableColumn<OrgWhitelistItem, String>  colPendIp,
-                              TableColumn<OrgWhitelistItem, String>  colPendMac,
-                              TableColumn<OrgWhitelistItem, String>  colPendName,
-                              TableColumn<OrgWhitelistItem, String>  colPendAsn,
-                              TableColumn<OrgWhitelistItem, String>  colPendCountry,
-                              TableColumn<OrgWhitelistItem, Integer> colPendHits,
-                              TableColumn<OrgWhitelistItem, String>  colPendSeen,
-                              CheckBox cbSelectAllPending, Label lblPendingCount) {
-        this.orgAcceptedTable      = acceptedTable;
-        this.orgPendingTable       = pendingTable;
-        this.cbSelectAllPendingOrg = cbSelectAllPending;
-        this.lblPendingOrgCount    = lblPendingCount;
-
-        colAccIp     .setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colAccName   .setCellValueFactory(new PropertyValueFactory<>("orgName"));
-        colAccAsn    .setCellValueFactory(new PropertyValueFactory<>("asn"));
-        colAccCountry.setCellValueFactory(new PropertyValueFactory<>("country"));
-        colAccHits   .setCellValueFactory(new PropertyValueFactory<>("hits"));
-        colAccSeen   .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
-        colAccIp.setCellFactory(col -> cyanCell());
-        orgAccepted = new FilteredList<>(orgAcceptedRaw, p -> true);
-        acceptedTable.setItems(orgAccepted);
-
-        colPendSel    .setCellValueFactory(new PropertyValueFactory<>("selected"));
-        colPendSel    .setCellFactory(col -> checkBoxCell());
-        colPendIp     .setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colPendMac    .setCellValueFactory(new PropertyValueFactory<>("mac"));
-        colPendName   .setCellValueFactory(new PropertyValueFactory<>("orgName"));
-        colPendAsn    .setCellValueFactory(new PropertyValueFactory<>("asn"));
-        colPendCountry.setCellValueFactory(new PropertyValueFactory<>("country"));
-        colPendHits   .setCellValueFactory(new PropertyValueFactory<>("hits"));
-        colPendSeen   .setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
-        colPendHits.setCellFactory(col -> hitCountCell());
-        orgPending = new FilteredList<>(orgPendingRaw, p -> true);
-        pendingTable.setItems(orgPending);
-        pendingTable.setPlaceholder(new Label("No pending organizations."));
-    }
-
     // ── LOADING / FILTERING ─────────────────────────────────────────────────
 
     public void reload() {
@@ -177,16 +127,10 @@ public class WhitelistPanelManager {
     }
 
     public void onWhitelistLoaded(List<MyWhitelistItem> my,
-                                  List<OrgWhitelistItem> org,
                                   List<FlaggedIpItem> flagged) {
         myWlEntries.setAll(my);
-        List<OrgWhitelistItem> accepted = org.stream().filter(OrgWhitelistItem::getApproved).collect(Collectors.toList());
-        List<OrgWhitelistItem> pending  = org.stream().filter(o -> !o.getApproved()).collect(Collectors.toList());
-        orgAcceptedRaw.setAll(accepted);
-        orgPendingRaw .setAll(pending);
-        flaggedIps    .setAll(flagged);
-        lblFlaggedCount   .setText("Flagged IPs — "            + flagged.size() + " pending");
-        lblPendingOrgCount.setText("Pending Organizations — " + pending.size() + " awaiting approval");
+        flaggedIps .setAll(flagged);
+        lblFlaggedCount.setText("Flagged IPs — " + flagged.size() + " pending");
     }
 
     private void applyFilter() {
@@ -196,14 +140,6 @@ public class WhitelistPanelManager {
                 || w.getIp().toLowerCase().contains(f)
                 || (w.getMac()   != null && w.getMac().toLowerCase().contains(f))
                 || (w.getLabel() != null && w.getLabel().toLowerCase().contains(f)));
-        orgAccepted.setPredicate(o ->
-                f.isEmpty()
-                || o.getIp().toLowerCase().contains(f)
-                || (o.getOrgName() != null && o.getOrgName().toLowerCase().contains(f)));
-        orgPending.setPredicate(o ->
-                f.isEmpty()
-                || o.getIp().toLowerCase().contains(f)
-                || (o.getOrgName() != null && o.getOrgName().toLowerCase().contains(f)));
     }
 
     // ── MY WHITELIST ACTIONS ────────────────────────────────────────────────
@@ -255,50 +191,6 @@ public class WhitelistPanelManager {
         flaggedIpTable.refresh();
     }
 
-    // ── ORG WHITELIST ACTIONS ───────────────────────────────────────────────
-
-    public void toggleSelectAllPendingOrgs() {
-        boolean v = cbSelectAllPendingOrg.isSelected();
-        orgPending.forEach(i -> i.setSelected(v));
-        orgPendingTable.refresh();
-    }
-
-    public void acceptSelectedPendingOrgs() {
-        if (!ready.getAsBoolean()) return;
-        var selected = orgPending.stream().filter(OrgWhitelistItem::isSelected).toList();
-        if (selected.isEmpty()) return;
-        dataLoader.get().submit("ids-approve-orgs",
-                () -> { for (var i : selected) backend.get().approveOrg(i.getId()); },
-                () -> { cbSelectAllPendingOrg.setSelected(false); reload(); },
-                msg -> status.accept("Approve failed: " + msg));
-    }
-
-    public void acceptAllPendingOrgs() {
-        if (!ready.getAsBoolean()) return;
-        dataLoader.get().submit("ids-approve-all",
-                () -> backend.get().approveAllOrgs(),
-                this::reload,
-                msg -> status.accept("Approve all failed: " + msg));
-    }
-
-    public void removeSelectedPendingOrgs() {
-        var selected = orgPending.stream().filter(OrgWhitelistItem::isSelected).toList();
-        if (selected.isEmpty() || !ready.getAsBoolean()) return;
-        dataLoader.get().submit("ids-del-pending",
-                () -> { for (var i : selected) backend.get().deleteOrgEntry(i.getId()); },
-                this::reload,
-                msg -> status.accept("Remove failed: " + msg));
-    }
-
-    public void removeSelectedAcceptedOrg() {
-        OrgWhitelistItem sel = orgAcceptedTable.getSelectionModel().getSelectedItem();
-        if (sel == null || !ready.getAsBoolean()) return;
-        dataLoader.get().submit("ids-del-accepted",
-                () -> backend.get().deleteOrgEntry(sel.getId()),
-                this::reload,
-                msg -> status.accept("Remove failed: " + msg));
-    }
-
     // ── CELL FACTORIES ──────────────────────────────────────────────────────
 
     private <T> TableCell<T, String> cyanCell() {
@@ -345,9 +237,6 @@ public class WhitelistPanelManager {
                 if (item instanceof FlaggedIpItem f) {
                     cb.setSelected(f.isSelected());
                     cb.setOnAction(e -> f.setSelected(cb.isSelected()));
-                } else if (item instanceof OrgWhitelistItem o) {
-                    cb.setSelected(o.isSelected());
-                    cb.setOnAction(e -> o.setSelected(cb.isSelected()));
                 }
                 setGraphic(cb);
             }
