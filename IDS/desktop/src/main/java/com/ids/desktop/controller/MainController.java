@@ -88,7 +88,8 @@ public class MainController implements Initializable {
     // managers (AlertTableManager, WhitelistPanelManager, CaseBoardManager,
     // DashboardPanel) that receive the FXML-injected controls via bind/setup.
     private BackendClient        backend;
-    private LiveFeedClient       wsFeed;
+    // volatile: the WS I/O thread's disconnect callback compares against it
+    private volatile LiveFeedClient wsFeed;
     private DataLoader           dataLoader;
     private AlertTableManager    alertManager;
     private WhitelistPanelManager whitelistManager;
@@ -109,6 +110,12 @@ public class MainController implements Initializable {
                 t.setDaemon(true);
                 return t;
             });
+
+    // Tracked so a re-login cancels the previous poll instead of stacking a second one
+    private ScheduledFuture<?> pollTask;
+    private int wsReconnectAttempts = 0;
+    // Blocks reconnect attempts once the app is closing
+    private volatile boolean shuttingDown = false;
 
     // ── INIT ──────────────────────────────────────────────────────────────────
 
@@ -242,6 +249,11 @@ public class MainController implements Initializable {
     // ── LIVE FEED (WEBSOCKET) ─────────────────────────────────────────────────
 
     private void startLiveFeed() {
+        // Close the previous feed so re-login doesn't leak a second WS connection
+        if (wsFeed != null) {
+            try { wsFeed.close(); } catch (Exception ignored) {}
+            wsFeed = null;
+        }
         try {
             String wsUrl = backendUrl()
                     .replace("http://",  "ws://")
@@ -253,19 +265,38 @@ public class MainController implements Initializable {
             //   param 2 - onAlert        : this::onAlertReceived handles BOTH new alerts
             //                              AND deletion events routed from /topic/alerts/deleted
             //   param 3 - onConnect      : null — no action needed on connect
-            //   param 4 - onDisconnect   : null — no action needed on disconnect
+            //   param 4 - onDisconnect   : schedules an exponential-backoff reconnect
             //   param 5 - onCleared      : null — we use the local handleClearAlerts() instead
-            wsFeed = new LiveFeedClient(
+            //
+            // holder lets the disconnect callback identify its own client: an old
+            // client closed on purpose by a later startLiveFeed() must NOT trigger
+            // a reconnect, or replacing a healthy connection would loop forever.
+            final LiveFeedClient[] holder = new LiveFeedClient[1];
+            holder[0] = new LiveFeedClient(
                     wsUrl,
                     this::onAlertReceived,
                     null,
-                    null,
+                    () -> {
+                        if (shuttingDown || holder[0] != wsFeed) return;
+                        wsReconnectAttempts++;
+                        scheduleWsReconnect();
+                    },
                     null
             );
+            wsFeed = holder[0];
             wsFeed.connect();
+            wsReconnectAttempts = 0; // reached only if construction/connect threw nothing
         } catch (Exception e) {
             System.err.println("[Desktop] WebSocket connect failed: " + e.getMessage());
         }
+    }
+
+    /** Schedules a startLiveFeed() retry with capped exponential backoff (1s…30s). */
+    private void scheduleWsReconnect() {
+        if (shuttingDown) return;
+        long delay = Math.min(30, (long) Math.pow(2, Math.min(wsReconnectAttempts, 5)));
+        System.err.println("[Desktop] Live feed down — reconnecting in " + delay + "s");
+        scheduler.schedule(() -> Platform.runLater(this::startLiveFeed), delay, TimeUnit.SECONDS);
     }
 
     private void onAlertReceived(JsonNode node) {
@@ -321,7 +352,9 @@ public class MainController implements Initializable {
     // ── POLLING ───────────────────────────────────────────────────────────────
 
     private void startPolling() {
-        scheduler.scheduleAtFixedRate(() -> {
+        // Cancel the previous task so re-login doesn't stack a second 30s poller
+        if (pollTask != null && !pollTask.isDone()) pollTask.cancel(false);
+        pollTask = scheduler.scheduleAtFixedRate(() -> {
             if (isReady()) dataLoader.loadAlertSummaries(
                     this::onAlertsLoaded,
                     this::updateStats,
@@ -463,6 +496,8 @@ public class MainController implements Initializable {
     // ── SHUTDOWN ──────────────────────────────────────────────────────────────
 
     public void shutdown() {
+        shuttingDown = true; // stop WS reconnect attempts racing the teardown below
+        if (pollTask != null) pollTask.cancel(false);
         scheduler.shutdownNow();
         if (dashboardPanel != null) dashboardPanel.stop();
         try { scheduler.awaitTermination(2, TimeUnit.SECONDS); }
