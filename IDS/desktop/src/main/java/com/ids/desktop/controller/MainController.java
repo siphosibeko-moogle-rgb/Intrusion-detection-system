@@ -29,7 +29,6 @@ import javafx.scene.layout.StackPane;
 public class MainController implements Initializable {
 
     private static final String BACKEND_URL      = "http://localhost:8080";
-    private static final int    MAX_LIVE_ENTRIES = 500;
     private static final DateTimeFormatter FMT   =
             DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
@@ -49,9 +48,6 @@ public class MainController implements Initializable {
     @FXML private TableColumn<AlertItem, Integer> colPackets;
     @FXML private TableColumn<AlertItem, Integer> colOccurrences;
 
-    // Live feed
-    @FXML private ListView<String> liveFeedList;
-    
     @FXML private javafx.scene.layout.StackPane dashboardHost;
 
   
@@ -59,19 +55,6 @@ public class MainController implements Initializable {
     @FXML private TableView<MyWhitelistItem>            myWhitelistTable;
     @FXML private TableColumn<MyWhitelistItem, String>  colMyWlIp, colMyWlMac, colMyWlLabel, colMyWlAddedAt;
     @FXML private TextField tfNewMyWlIp, tfNewMyWlMac, tfNewMyWlLabel, tfFilterWlIp;
-
-    // Org whitelist – accepted
-    @FXML private TableView<OrgWhitelistItem>            orgAcceptedTable;
-    @FXML private TableColumn<OrgWhitelistItem, String>  colOrgAccIp, colOrgAccName, colOrgAccAsn, colOrgAccCountry, colOrgAccSeen;
-    @FXML private TableColumn<OrgWhitelistItem, Integer> colOrgAccHits;
-
-    // Org whitelist – pending
-    @FXML private TableView<OrgWhitelistItem>            orgPendingTable;
-    @FXML private TableColumn<OrgWhitelistItem, Boolean> colOrgPendSel;
-    @FXML private TableColumn<OrgWhitelistItem, String>  colOrgPendIp, colOrgPendMac, colOrgPendName, colOrgPendAsn, colOrgPendCountry, colOrgPendSeen;
-    @FXML private TableColumn<OrgWhitelistItem, Integer> colOrgPendHits;
-    @FXML private CheckBox cbSelectAllPendingOrg;
-    @FXML private Label    lblPendingOrgCount;
 
     // Flagged IPs
     @FXML private TableView<FlaggedIpItem>            flaggedIpTable;
@@ -119,8 +102,6 @@ public class MainController implements Initializable {
     private HealthPoller healthPoller;
 
     private final ObservableList<AlertItem>        allAlerts      = FXCollections.observableArrayList();
-
-    private final ObservableList<String>           liveEntries    = FXCollections.observableArrayList();
 
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -172,13 +153,6 @@ public class MainController implements Initializable {
                 colFlagSel, colFlagIp, colFlagMac, colFlagThreat,
                 colFlagProto, colFlagHits, colFlagSeen,
                 cbSelectAllFlagged, lblFlaggedCount);
-        whitelistManager.bindOrgTables(orgAcceptedTable,
-                colOrgAccIp, colOrgAccName, colOrgAccAsn,
-                colOrgAccCountry, colOrgAccHits, colOrgAccSeen,
-                orgPendingTable,
-                colOrgPendSel, colOrgPendIp, colOrgPendMac, colOrgPendName,
-                colOrgPendAsn, colOrgPendCountry, colOrgPendHits, colOrgPendSeen,
-                cbSelectAllPendingOrg, lblPendingOrgCount);
 
         caseBoard = new CaseBoardManager(
                 () -> dataLoader, () -> backend, this::isReady,
@@ -190,8 +164,6 @@ public class MainController implements Initializable {
                 tfCaseFilterStatus, tfCaseFilterIp,
                 tfNewCaseTitle, tfNewCaseSuspectIp, tfNewCaseSuspectMac,
                 cbNewCaseSeverity, lblCaseStatus);
-
-        liveFeedList.setItems(liveEntries);
 
         cbFilterSeverity.setItems(FXCollections.observableArrayList(
                 "", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"));
@@ -326,15 +298,6 @@ public class MainController implements Initializable {
         String srcIp     = node.path("sourceIp").asText();
 
         Platform.runLater(() -> {
-            // Append to the live-feed strip
-            liveEntries.add(0, String.format("[%s] %s %s from %s",
-                    ts,
-                    severity.isEmpty() ? "?" : severity,
-                    type.isEmpty()     ? "?" : type,
-                    srcIp.isEmpty()    ? "?" : srcIp));
-            if (liveEntries.size() > MAX_LIVE_ENTRIES)
-                liveEntries.remove(liveEntries.size() - 1);
-
             // Build AlertItem from the AlertSummary WebSocket payload
             AlertItem item = new AlertItem(
                     ts, severity, type, srcIp,
@@ -379,7 +342,6 @@ public class MainController implements Initializable {
 
     @FXML private void onClearFilters() { alertManager.clearFilters(); }
     @FXML private void onRefresh()      { if (isReady()) loadAllData(); }
-    @FXML private void onClearFeed()    { liveEntries.clear(); }
 
     /**
      * Dismisses the selected alert from both the dashboard AND the database.
@@ -434,12 +396,6 @@ public class MainController implements Initializable {
     @FXML private void onSelectAllFlagged()     { whitelistManager.toggleSelectAllFlagged(); }
     @FXML private void onAcceptFlagged()        { whitelistManager.acceptSelectedFlagged(); }
     @FXML private void onRemoveFlagged()        { whitelistManager.clearFlaggedSelection(); }
-    @FXML private void onSelectAllPendingOrgs() { whitelistManager.toggleSelectAllPendingOrgs(); }
-    @FXML private void onAcceptPendingOrgs()    { whitelistManager.acceptSelectedPendingOrgs(); }
-    @FXML private void onAcceptAllPendingOrgs() { whitelistManager.acceptAllPendingOrgs(); }
-    @FXML private void onApproveAllOrgs()       { whitelistManager.acceptAllPendingOrgs(); }
-    @FXML private void onRemovePendingOrg()     { whitelistManager.removeSelectedPendingOrgs(); }
-    @FXML private void onRemoveAcceptedOrg()    { whitelistManager.removeSelectedAcceptedOrg(); }
 
     // ── CASE ACTIONS — thin delegations to CaseBoardManager ──────────────────
 

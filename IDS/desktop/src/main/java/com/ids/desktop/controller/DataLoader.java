@@ -17,7 +17,6 @@ public class DataLoader {
     @FunctionalInterface
     public interface WhitelistCallback {
         void accept(List<MyWhitelistItem> my,
-                    List<OrgWhitelistItem> org,
                     List<FlaggedIpItem> flagged);
     }
 
@@ -55,11 +54,10 @@ public class DataLoader {
         thread("ids-load-whitelist", () -> {
             try {
                 List<MyWhitelistItem> myItems = backend.fetchMyWhitelist();
-                List<OrgWhitelistItem> orgItems = backend.fetchOrgWhitelist();
                 List<FlaggedIpItem> flagged = backend.fetchFlaggedIps();
 
                 Platform.runLater(() ->
-                        onLoaded.accept(myItems, orgItems, flagged));
+                        onLoaded.accept(myItems, flagged));
 
             } catch (Exception e) {
                 Platform.runLater(() -> onError.accept(e.getMessage()));
