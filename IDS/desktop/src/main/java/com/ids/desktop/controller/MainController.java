@@ -56,6 +56,13 @@ public class MainController implements Initializable {
     @FXML private TableColumn<MyWhitelistItem, String>  colMyWlIp, colMyWlMac, colMyWlLabel, colMyWlAddedAt;
     @FXML private TextField tfNewMyWlIp, tfNewMyWlMac, tfNewMyWlLabel, tfFilterWlIp;
 
+    // Trusted networks (provider CIDR ranges)
+    @FXML private TableView<TrustedNetworkItem>             trustedNetworkTable;
+    @FXML private TableColumn<TrustedNetworkItem, String>   colTnCidr, colTnProvider, colTnCategory;
+    @FXML private TableColumn<TrustedNetworkItem, Boolean>  colTnEnabled, colTnSuppress;
+    @FXML private TextField tfNewTnCidr, tfNewTnProvider, tfNewTnCategory;
+    @FXML private CheckBox  cbNewTnSuppressBeaconing;
+
     // Flagged IPs
     @FXML private TableView<FlaggedIpItem>            flaggedIpTable;
     @FXML private TableColumn<FlaggedIpItem, Boolean> colFlagSel;
@@ -149,6 +156,11 @@ public class MainController implements Initializable {
         whitelistManager.bindMyWhitelist(myWhitelistTable,
                 colMyWlIp, colMyWlMac, colMyWlLabel, colMyWlAddedAt,
                 tfNewMyWlIp, tfNewMyWlMac, tfNewMyWlLabel, tfFilterWlIp);
+        whitelistManager.bindTrustedNetworks(trustedNetworkTable,
+                colTnCidr, colTnProvider, colTnCategory,
+                colTnEnabled, colTnSuppress,
+                tfNewTnCidr, tfNewTnProvider, tfNewTnCategory,
+                cbNewTnSuppressBeaconing);
         whitelistManager.bindFlaggedIps(flaggedIpTable,
                 colFlagSel, colFlagIp, colFlagMac, colFlagThreat,
                 colFlagProto, colFlagHits, colFlagSeen,
@@ -393,6 +405,9 @@ public class MainController implements Initializable {
 
     @FXML private void onAddMyWhitelist()       { whitelistManager.addMyEntry(); }
     @FXML private void onDeleteMyWhitelist()    { whitelistManager.deleteSelectedMyEntry(); }
+    @FXML private void onAddTrustedNetwork()    { whitelistManager.addTrustedNetwork(); }
+    @FXML private void onDeleteTrustedNetwork() { whitelistManager.deleteSelectedTrustedNetwork(); }
+    @FXML private void onToggleTrustedNetwork() { whitelistManager.toggleSelectedTrustedNetwork(); }
     @FXML private void onSelectAllFlagged()     { whitelistManager.toggleSelectAllFlagged(); }
     @FXML private void onAcceptFlagged()        { whitelistManager.acceptSelectedFlagged(); }
     @FXML private void onRemoveFlagged()        { whitelistManager.clearFlaggedSelection(); }

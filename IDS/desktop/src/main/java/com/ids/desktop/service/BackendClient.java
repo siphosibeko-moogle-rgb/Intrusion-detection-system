@@ -17,6 +17,7 @@ import com.ids.desktop.model.AlertItem;
 import com.ids.desktop.model.CaseItem;
 import com.ids.desktop.model.FlaggedIpItem;
 import com.ids.desktop.model.MyWhitelistItem;
+import com.ids.desktop.model.TrustedNetworkItem;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -225,6 +226,42 @@ public class BackendClient {
         delete("/api/my-whitelist/" + id);
     }
 
+    // ── TRUSTED NETWORKS (provider CIDR ranges) ───────────────────────────
+
+    public List<TrustedNetworkItem> fetchTrustedNetworks() throws IOException {
+        List<TrustedNetworkItem> list = new ArrayList<>();
+        for (JsonNode n : mapper.readTree(get("/api/trusted-networks"))) {
+            list.add(new TrustedNetworkItem(
+                longOf(n, "id", 0L),
+                textOf(n, "cidr", ""),
+                textOf(n, "provider", ""),
+                textOf(n, "category", ""),
+                boolOf(n, "enabled", true),
+                boolOf(n, "suppressBeaconing", false)
+            ));
+        }
+        return list;
+    }
+
+    public void addTrustedNetwork(String cidr, String provider, String category,
+                                  boolean suppressBeaconing) throws IOException {
+        String body = mapper.writeValueAsString(Map.of(
+            "cidr", cidr,
+            "provider", provider,
+            "category", category,
+            "suppressBeaconing", suppressBeaconing));
+        post("/api/trusted-networks", body);
+    }
+
+    public void setTrustedNetworkEnabled(long id, boolean enabled) throws IOException {
+        patchJson("/api/trusted-networks/" + id,
+            mapper.writeValueAsString(Map.of("enabled", enabled)));
+    }
+
+    public void deleteTrustedNetwork(long id) throws IOException {
+        delete("/api/trusted-networks/" + id);
+    }
+
     // ── FORENSIC CASES ────────────────────────────────────────────────────
 
     public List<CaseItem> fetchCases() throws IOException {
@@ -383,6 +420,16 @@ public class BackendClient {
                 .url(baseUrl + path)
                 .addHeader("Authorization", "Bearer " + jwtToken)
                 .delete().build())) {
+            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
+        }
+    }
+
+    private void patchJson(String path, String json) throws IOException {
+        try (Response resp = executeWithRetry(() -> new Request.Builder()
+                .url(baseUrl + path)
+                .addHeader("Authorization", "Bearer " + jwtToken)
+                .patch(RequestBody.create(json, MediaType.get("application/json")))
+                .build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
         }
     }

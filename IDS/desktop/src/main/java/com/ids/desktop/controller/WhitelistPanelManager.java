@@ -2,6 +2,7 @@ package com.ids.desktop.controller;
 
 import com.ids.desktop.model.FlaggedIpItem;
 import com.ids.desktop.model.MyWhitelistItem;
+import com.ids.desktop.model.TrustedNetworkItem;
 import com.ids.desktop.service.BackendClient;
 
 import javafx.collections.FXCollections;
@@ -16,9 +17,10 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Owns the two whitelist views (My Whitelist — Trusted Devices, and
- * Flagged IPs): table wiring, filtering, and every add/accept/remove
- * action against the backend.
+ * Owns the three whitelist views (My Whitelist — Trusted Devices,
+ * Trusted Networks — provider CIDR ranges, and Flagged IPs): table
+ * wiring, filtering, and every add/accept/remove action against the
+ * backend.
  *
  * Extracted from MainController (same decomposition pattern as
  * AlertTableManager / DashboardPanel). MainController keeps the @FXML
@@ -43,14 +45,20 @@ public class WhitelistPanelManager {
     private final BooleanSupplier         ready;
     private final Consumer<String>        status;
 
-    private final ObservableList<MyWhitelistItem> myWlEntries = FXCollections.observableArrayList();
-    private final ObservableList<FlaggedIpItem>   flaggedIps  = FXCollections.observableArrayList();
+    private final ObservableList<MyWhitelistItem>     myWlEntries     = FXCollections.observableArrayList();
+    private final ObservableList<TrustedNetworkItem>  trustedNetworks = FXCollections.observableArrayList();
+    private final ObservableList<FlaggedIpItem>       flaggedIps      = FXCollections.observableArrayList();
 
-    private FilteredList<MyWhitelistItem> filteredMyWl;
+    private FilteredList<MyWhitelistItem>    filteredMyWl;
+    private FilteredList<TrustedNetworkItem> filteredTrustedNets;
 
     // Controls handed over from MainController via bind*()
     private TableView<MyWhitelistItem>  myWhitelistTable;
     private TextField tfNewIp, tfNewMac, tfNewLabel, tfFilter;
+
+    private TableView<TrustedNetworkItem> trustedNetworkTable;
+    private TextField tfNewTnCidr, tfNewTnProvider, tfNewTnCategory;
+    private CheckBox  cbNewTnSuppressBeaconing;
 
     private TableView<FlaggedIpItem> flaggedIpTable;
     private CheckBox cbSelectAllFlagged;
@@ -93,6 +101,35 @@ public class WhitelistPanelManager {
         tfFilter.textProperty().addListener((obs, o, n) -> applyFilter());
     }
 
+    public void bindTrustedNetworks(TableView<TrustedNetworkItem> table,
+                                    TableColumn<TrustedNetworkItem, String>  colCidr,
+                                    TableColumn<TrustedNetworkItem, String>  colProvider,
+                                    TableColumn<TrustedNetworkItem, String>  colCategory,
+                                    TableColumn<TrustedNetworkItem, Boolean> colEnabled,
+                                    TableColumn<TrustedNetworkItem, Boolean> colSuppress,
+                                    TextField tfCidr, TextField tfProvider,
+                                    TextField tfCategory, CheckBox cbSuppressBeaconing) {
+        this.trustedNetworkTable      = table;
+        this.tfNewTnCidr              = tfCidr;
+        this.tfNewTnProvider          = tfProvider;
+        this.tfNewTnCategory          = tfCategory;
+        this.cbNewTnSuppressBeaconing = cbSuppressBeaconing;
+
+        colCidr    .setCellValueFactory(new PropertyValueFactory<>("cidr"));
+        colProvider.setCellValueFactory(new PropertyValueFactory<>("provider"));
+        colCategory.setCellValueFactory(new PropertyValueFactory<>("category"));
+        colEnabled .setCellValueFactory(new PropertyValueFactory<>("enabled"));
+        colSuppress.setCellValueFactory(new PropertyValueFactory<>("suppressBeaconing"));
+        colCidr.setCellFactory(col -> cyanCell());
+        colEnabled .setCellFactory(col -> yesNoCell(false));
+        // Amber "Yes": suppressing beaconing for a range is a deliberate
+        // security trade-off, so it should stand out in the table.
+        colSuppress.setCellFactory(col -> yesNoCell(true));
+        filteredTrustedNets = new FilteredList<>(trustedNetworks, p -> true);
+        table.setItems(filteredTrustedNets);
+        table.setPlaceholder(new Label("No trusted networks."));
+    }
+
     public void bindFlaggedIps(TableView<FlaggedIpItem> table,
                                TableColumn<FlaggedIpItem, Boolean> colSel,
                                TableColumn<FlaggedIpItem, String>  colIp,
@@ -124,6 +161,8 @@ public class WhitelistPanelManager {
 
     public void reload() {
         dataLoader.get().loadWhitelist(this::onWhitelistLoaded, e -> {});
+        dataLoader.get().loadTrustedNetworks(trustedNetworks::setAll,
+                msg -> status.accept("Trusted networks load failed: " + msg));
     }
 
     public void onWhitelistLoaded(List<MyWhitelistItem> my,
@@ -140,6 +179,13 @@ public class WhitelistPanelManager {
                 || w.getIp().toLowerCase().contains(f)
                 || (w.getMac()   != null && w.getMac().toLowerCase().contains(f))
                 || (w.getLabel() != null && w.getLabel().toLowerCase().contains(f)));
+        if (filteredTrustedNets != null) {
+            filteredTrustedNets.setPredicate(t ->
+                    f.isEmpty()
+                    || (t.getCidr()     != null && t.getCidr().toLowerCase().contains(f))
+                    || (t.getProvider() != null && t.getProvider().toLowerCase().contains(f))
+                    || (t.getCategory() != null && t.getCategory().toLowerCase().contains(f)));
+        }
     }
 
     // ── MY WHITELIST ACTIONS ────────────────────────────────────────────────
@@ -164,6 +210,47 @@ public class WhitelistPanelManager {
                 () -> backend.get().deleteMyWhitelistEntry(sel.getId()),
                 this::reload,
                 msg -> status.accept("Delete failed: " + msg));
+    }
+
+    // ── TRUSTED NETWORK ACTIONS ─────────────────────────────────────────────
+
+    public void addTrustedNetwork() {
+        if (!ready.getAsBoolean()) return;
+        String cidr     = tfNewTnCidr.getText().trim();
+        String provider = tfNewTnProvider.getText().trim();
+        if (cidr.isEmpty() || provider.isEmpty()) {
+            status.accept("Trusted network needs a CIDR and a provider.");
+            return;
+        }
+        String  category = tfNewTnCategory.getText().trim();
+        boolean suppress = cbNewTnSuppressBeaconing.isSelected();
+        dataLoader.get().submit("ids-add-trusted-net",
+                () -> backend.get().addTrustedNetwork(cidr, provider, category, suppress),
+                () -> {
+                    tfNewTnCidr.clear(); tfNewTnProvider.clear(); tfNewTnCategory.clear();
+                    cbNewTnSuppressBeaconing.setSelected(false);
+                    reload();
+                },
+                msg -> status.accept("Add trusted network failed: " + msg));
+    }
+
+    public void deleteSelectedTrustedNetwork() {
+        TrustedNetworkItem sel = trustedNetworkTable.getSelectionModel().getSelectedItem();
+        if (sel == null || !ready.getAsBoolean()) return;
+        dataLoader.get().submit("ids-del-trusted-net",
+                () -> backend.get().deleteTrustedNetwork(sel.getId()),
+                this::reload,
+                msg -> status.accept("Delete trusted network failed: " + msg));
+    }
+
+    public void toggleSelectedTrustedNetwork() {
+        TrustedNetworkItem sel = trustedNetworkTable.getSelectionModel().getSelectedItem();
+        if (sel == null || !ready.getAsBoolean()) return;
+        boolean enable = !sel.isEnabled();
+        dataLoader.get().submit("ids-toggle-trusted-net",
+                () -> backend.get().setTrustedNetworkEnabled(sel.getId(), enable),
+                this::reload,
+                msg -> status.accept("Toggle trusted network failed: " + msg));
     }
 
     // ── FLAGGED IP ACTIONS ──────────────────────────────────────────────────
@@ -210,6 +297,22 @@ public class WhitelistPanelManager {
                 if (empty || s == null) { setText(null); setStyle(""); return; }
                 setText(s);
                 setStyle("-fx-text-fill:#f59e0b; -fx-font-weight:bold;");
+            }
+        };
+    }
+
+    /** Yes/No cell for boolean columns. warnOnYes renders Yes in amber
+     *  (used for Suppress Beaconing, where "Yes" is a security trade-off). */
+    private <T> TableCell<T, Boolean> yesNoCell(boolean warnOnYes) {
+        return new TableCell<>() {
+            @Override protected void updateItem(Boolean v, boolean empty) {
+                super.updateItem(v, empty);
+                if (empty || v == null) { setText(null); setStyle(""); return; }
+                setText(v ? "Yes" : "No");
+                setStyle(v
+                        ? (warnOnYes ? "-fx-text-fill:#f59e0b; -fx-font-weight:bold;"
+                                     : "-fx-text-fill:#22c55e; -fx-font-weight:bold;")
+                        : "-fx-text-fill:#6b7280;");
             }
         };
     }
