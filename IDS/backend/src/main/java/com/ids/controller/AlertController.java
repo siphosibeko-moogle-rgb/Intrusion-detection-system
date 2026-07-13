@@ -6,6 +6,7 @@ import com.ids.service.AlertService;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 import com.ids.repository.AlertRepository;
@@ -171,6 +172,8 @@ public class AlertController {
      *
      * Broadcasts on /topic/alerts-cleared so live clients wipe their tables.
      */
+    // ADMIN only: irreversibly wipes every alert, too destructive for VIEWER.
+    @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping
     public ResponseEntity<?> clearAll() {
         summaryRepository.deleteAll();
