@@ -408,6 +408,7 @@ public class MainController implements Initializable {
     @FXML private void onAddTrustedNetwork()    { whitelistManager.addTrustedNetwork(); }
     @FXML private void onDeleteTrustedNetwork() { whitelistManager.deleteSelectedTrustedNetwork(); }
     @FXML private void onToggleTrustedNetwork() { whitelistManager.toggleSelectedTrustedNetwork(); }
+    @FXML private void onSyncTrustedNetworks()  { whitelistManager.syncTrustedNetworkFeeds(); }
     @FXML private void onSelectAllFlagged()     { whitelistManager.toggleSelectAllFlagged(); }
     @FXML private void onAcceptFlagged()        { whitelistManager.acceptSelectedFlagged(); }
     @FXML private void onRemoveFlagged()        { whitelistManager.clearFlaggedSelection(); }

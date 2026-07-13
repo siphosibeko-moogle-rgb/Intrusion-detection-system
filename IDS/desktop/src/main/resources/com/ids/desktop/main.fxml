@@ -138,6 +138,10 @@
                                             onAction="#onAddTrustedNetwork"/>
                                     <Button text="Enable/Disable"
                                             onAction="#onToggleTrustedNetwork"/>
+                                    <Button text="Sync Provider Feeds"
+                                            onAction="#onSyncTrustedNetworks"
+                                            style="-fx-text-fill:white;
+                                                   -fx-background-color:#3b82f6;"/>
                                     <Button text="Delete Selected"
                                             onAction="#onDeleteTrustedNetwork"
                                             style="-fx-text-fill:white;

@@ -1,6 +1,7 @@
 package com.ids.controller;
 
 import com.ids.entity.TrustedNetworkEntry;
+import com.ids.service.TrustedNetworkFeedSyncService;
 import com.ids.service.TrustedNetworkService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,7 +14,13 @@ import java.util.Map;
 public class TrustedNetworkController {
 
     private final TrustedNetworkService svc;
-    public TrustedNetworkController(TrustedNetworkService svc) { this.svc = svc; }
+    private final TrustedNetworkFeedSyncService feedSync;
+
+    public TrustedNetworkController(TrustedNetworkService svc,
+                                    TrustedNetworkFeedSyncService feedSync) {
+        this.svc = svc;
+        this.feedSync = feedSync;
+    }
 
     @GetMapping
     public List<TrustedNetworkEntry> getAll() { return svc.getAll(); }
@@ -36,6 +43,12 @@ public class TrustedNetworkController {
 
     @DeleteMapping("/{id}")
     public void delete(@PathVariable Long id) { svc.delete(id); }
+
+    /** Pulls the published provider feeds now and reconciles feed-owned rows.
+     *  Always available regardless of the scheduled-sync flag; returns a
+     *  per-provider summary ("added 2, removed 0, kept 13 …" / "FAILED: …"). */
+    @PostMapping("/sync")
+    public Map<String, String> sync() { return feedSync.syncAll(); }
 
     // Validation failures (malformed CIDR, blank provider, duplicate range)
     // come back as 400 with the reason, not a generic 500.

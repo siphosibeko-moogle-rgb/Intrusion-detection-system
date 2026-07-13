@@ -243,6 +243,19 @@ public class WhitelistPanelManager {
                 msg -> status.accept("Delete trusted network failed: " + msg));
     }
 
+    public void syncTrustedNetworkFeeds() {
+        if (!ready.getAsBoolean()) return;
+        status.accept("Syncing provider feeds… (can take up to a minute)");
+        // submit() only reports success/failure, so smuggle the summary out
+        // through a holder — the callback runs on the FX thread after the
+        // background call finished, so this is safe.
+        final String[] summary = new String[1];
+        dataLoader.get().submit("ids-sync-trusted-nets",
+                () -> summary[0] = backend.get().syncTrustedNetworkFeeds(),
+                () -> { status.accept("Feed sync: " + summary[0]); reload(); },
+                msg -> status.accept("Feed sync failed: " + msg));
+    }
+
     public void toggleSelectedTrustedNetwork() {
         TrustedNetworkItem sel = trustedNetworkTable.getSelectionModel().getSelectedItem();
         if (sel == null || !ready.getAsBoolean()) return;

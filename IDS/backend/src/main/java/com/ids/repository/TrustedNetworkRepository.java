@@ -8,5 +8,6 @@ public interface TrustedNetworkRepository
         extends JpaRepository<TrustedNetworkEntry, Long> {
 
     List<TrustedNetworkEntry> findByEnabledTrue();
+    List<TrustedNetworkEntry> findBySource(String source);
     boolean existsByCidr(String cidr);
 }

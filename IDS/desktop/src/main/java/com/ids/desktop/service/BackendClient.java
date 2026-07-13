@@ -262,6 +262,36 @@ public class BackendClient {
         delete("/api/trusted-networks/" + id);
     }
 
+    /**
+     * Triggers the backend's provider-feed sync and returns a one-line
+     * per-provider summary ("Cloudflare: added 2, … | AWS: FAILED: …").
+     *
+     * Uses a long-read-timeout clone of the shared client: the backend
+     * fetches four external feeds serially (the Azure one via a two-step
+     * page scrape), which routinely takes longer than the default 10s
+     * read timeout.
+     */
+    public String syncTrustedNetworkFeeds() throws IOException {
+        OkHttpClient longHttp = http.newBuilder()
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build();
+        Request req = new Request.Builder()
+            .url(baseUrl + "/api/trusted-networks/sync")
+            .addHeader("Authorization", "Bearer " + jwtToken)
+            .post(RequestBody.create("{}", MediaType.get("application/json")))
+            .build();
+        try (Response resp = longHttp.newCall(req).execute()) {
+            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
+            JsonNode node = mapper.readTree(resp.body().string());
+            StringBuilder sb = new StringBuilder();
+            node.fields().forEachRemaining(e -> {
+                if (sb.length() > 0) sb.append("  |  ");
+                sb.append(e.getKey()).append(": ").append(e.getValue().asText());
+            });
+            return sb.length() > 0 ? sb.toString() : "no providers configured";
+        }
+    }
+
     // ── FORENSIC CASES ────────────────────────────────────────────────────
 
     public List<CaseItem> fetchCases() throws IOException {
