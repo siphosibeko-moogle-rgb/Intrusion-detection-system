@@ -17,6 +17,7 @@ import com.ids.desktop.model.AlertItem;
 import com.ids.desktop.model.CaseItem;
 import com.ids.desktop.model.FlaggedIpItem;
 import com.ids.desktop.model.MyWhitelistItem;
+import com.ids.desktop.model.TrustedNetworkItem;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -225,6 +226,72 @@ public class BackendClient {
         delete("/api/my-whitelist/" + id);
     }
 
+    // ── TRUSTED NETWORKS (provider CIDR ranges) ───────────────────────────
+
+    public List<TrustedNetworkItem> fetchTrustedNetworks() throws IOException {
+        List<TrustedNetworkItem> list = new ArrayList<>();
+        for (JsonNode n : mapper.readTree(get("/api/trusted-networks"))) {
+            list.add(new TrustedNetworkItem(
+                longOf(n, "id", 0L),
+                textOf(n, "cidr", ""),
+                textOf(n, "provider", ""),
+                textOf(n, "category", ""),
+                boolOf(n, "enabled", true),
+                boolOf(n, "suppressBeaconing", false)
+            ));
+        }
+        return list;
+    }
+
+    public void addTrustedNetwork(String cidr, String provider, String category,
+                                  boolean suppressBeaconing) throws IOException {
+        String body = mapper.writeValueAsString(Map.of(
+            "cidr", cidr,
+            "provider", provider,
+            "category", category,
+            "suppressBeaconing", suppressBeaconing));
+        post("/api/trusted-networks", body);
+    }
+
+    public void setTrustedNetworkEnabled(long id, boolean enabled) throws IOException {
+        patchJson("/api/trusted-networks/" + id,
+            mapper.writeValueAsString(Map.of("enabled", enabled)));
+    }
+
+    public void deleteTrustedNetwork(long id) throws IOException {
+        delete("/api/trusted-networks/" + id);
+    }
+
+    /**
+     * Triggers the backend's provider-feed sync and returns a one-line
+     * per-provider summary ("Cloudflare: added 2, … | AWS: FAILED: …").
+     *
+     * Uses a long-read-timeout clone of the shared client: the backend
+     * fetches four external feeds serially (the Azure one via a two-step
+     * page scrape), which routinely takes longer than the default 10s
+     * read timeout.
+     */
+    public String syncTrustedNetworkFeeds() throws IOException {
+        OkHttpClient longHttp = http.newBuilder()
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build();
+        Request req = new Request.Builder()
+            .url(baseUrl + "/api/trusted-networks/sync")
+            .addHeader("Authorization", "Bearer " + jwtToken)
+            .post(RequestBody.create("{}", MediaType.get("application/json")))
+            .build();
+        try (Response resp = longHttp.newCall(req).execute()) {
+            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
+            JsonNode node = mapper.readTree(resp.body().string());
+            StringBuilder sb = new StringBuilder();
+            node.fields().forEachRemaining(e -> {
+                if (sb.length() > 0) sb.append("  |  ");
+                sb.append(e.getKey()).append(": ").append(e.getValue().asText());
+            });
+            return sb.length() > 0 ? sb.toString() : "no providers configured";
+        }
+    }
+
     // ── FORENSIC CASES ────────────────────────────────────────────────────
 
     public List<CaseItem> fetchCases() throws IOException {
@@ -294,8 +361,12 @@ public class BackendClient {
                 0L,
                 textOf(n, "ip", ""),
                 textOf(n, "mac", ""),
+                textOf(n, "organization", "Unknown"),
+                textOf(n, "asn", ""),
+                textOf(n, "country", ""),
                 textOf(n, "threatType", ""),
                 textOf(n, "protocol", ""),
+                textOf(n, "severity", ""),
                 intOf(n, "hits", 0),
                 textOf(n, "lastSeen", "")
             ));
@@ -383,6 +454,16 @@ public class BackendClient {
                 .url(baseUrl + path)
                 .addHeader("Authorization", "Bearer " + jwtToken)
                 .delete().build())) {
+            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
+        }
+    }
+
+    private void patchJson(String path, String json) throws IOException {
+        try (Response resp = executeWithRetry(() -> new Request.Builder()
+                .url(baseUrl + path)
+                .addHeader("Authorization", "Bearer " + jwtToken)
+                .patch(RequestBody.create(json, MediaType.get("application/json")))
+                .build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
         }
     }

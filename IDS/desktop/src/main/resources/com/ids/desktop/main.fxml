@@ -65,10 +65,10 @@
                                        promptText="Filter IP / MAC / Label"/>
                         </HBox>
 
-                        <!-- Trusted Devices + Flagged IPs share the full page -->
+                        <!-- Trusted Devices + Trusted Networks + Flagged IPs share the full page -->
                         <SplitPane orientation="VERTICAL"
                                    VBox.vgrow="ALWAYS"
-                                   dividerPositions="0.5">
+                                   dividerPositions="0.34, 0.67">
 
                             <!-- SECTION 1: TRUSTED DEVICES -->
                             <VBox spacing="6" style="-fx-padding:6;">
@@ -101,7 +101,55 @@
                                 </HBox>
                             </VBox>
 
-                            <!-- SECTION 2: FLAGGED IPs -->
+                            <!-- SECTION 2: TRUSTED NETWORKS (provider CIDR ranges) -->
+                            <VBox spacing="6" style="-fx-padding:6;">
+                                <Label text="Trusted Networks — Provider CIDR Ranges (Cloudflare / AWS / Google / Azure)"
+                                       style="-fx-font-weight:bold;"/>
+                                <TableView fx:id="trustedNetworkTable"
+                                           VBox.vgrow="ALWAYS">
+                                    <columns>
+                                        <TableColumn fx:id="colTnCidr"
+                                                     text="CIDR"
+                                                     prefWidth="160"/>
+                                        <TableColumn fx:id="colTnProvider"
+                                                     text="Provider"
+                                                     prefWidth="120"/>
+                                        <TableColumn fx:id="colTnCategory"
+                                                     text="Category"
+                                                     prefWidth="100"/>
+                                        <TableColumn fx:id="colTnEnabled"
+                                                     text="Enabled"
+                                                     prefWidth="80"/>
+                                        <TableColumn fx:id="colTnSuppress"
+                                                     text="Suppress Beaconing"
+                                                     prefWidth="140"/>
+                                    </columns>
+                                </TableView>
+                                <HBox spacing="8" alignment="CENTER_LEFT">
+                                    <TextField fx:id="tfNewTnCidr"
+                                               promptText="CIDR (e.g. 104.16.0.0/13)"/>
+                                    <TextField fx:id="tfNewTnProvider"
+                                               promptText="Provider (e.g. Cloudflare)"/>
+                                    <TextField fx:id="tfNewTnCategory"
+                                               promptText="Category (e.g. CDN)"/>
+                                    <CheckBox fx:id="cbNewTnSuppressBeaconing"
+                                              text="Suppress beaconing"/>
+                                    <Button text="Add"
+                                            onAction="#onAddTrustedNetwork"/>
+                                    <Button text="Enable/Disable"
+                                            onAction="#onToggleTrustedNetwork"/>
+                                    <Button text="Sync Provider Feeds"
+                                            onAction="#onSyncTrustedNetworks"
+                                            style="-fx-text-fill:white;
+                                                   -fx-background-color:#3b82f6;"/>
+                                    <Button text="Delete Selected"
+                                            onAction="#onDeleteTrustedNetwork"
+                                            style="-fx-text-fill:white;
+                                                   -fx-background-color:#ef4444;"/>
+                                </HBox>
+                            </VBox>
+
+                            <!-- SECTION 3: FLAGGED IPs -->
                             <VBox spacing="6" style="-fx-padding:6;">
                                 <HBox spacing="10">
                                     <Label fx:id="lblFlaggedCount"
@@ -123,10 +171,15 @@
                                                      text="IP"/>
                                         <TableColumn fx:id="colFlagMac"
                                                      text="MAC"/>
+                                        <TableColumn fx:id="colFlagOrg"
+                                                     text="Organization"
+                                                     prefWidth="150"/>
                                         <TableColumn fx:id="colFlagThreat"
-                                                     text="Threat"/>
+                                                     text="Threats"/>
+                                        <TableColumn fx:id="colFlagSeverity"
+                                                     text="Severity"/>
                                         <TableColumn fx:id="colFlagProto"
-                                                     text="Protocol"/>
+                                                     text="Protocols"/>
                                         <TableColumn fx:id="colFlagHits"
                                                      text="Hits"/>
                                         <TableColumn fx:id="colFlagSeen"

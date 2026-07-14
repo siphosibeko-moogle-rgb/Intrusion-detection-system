@@ -78,6 +78,13 @@ public class BeaconingDetector implements Detector {
         // flow history for them — see class doc above.
         if (whitelist.isTrustedBeaconDestination(dstIP)) return;
 
+        // trusted_networks ranges suppress beaconing ONLY when the range has
+        // suppress_beaconing explicitly set to true. A provider match alone
+        // (isTrustedNetwork) must never silence this detector — C2 hides on
+        // Cloudflare Workers / AWS Lambda URLs / Azure Front Door precisely
+        // because defenders blanket-trust those ranges.
+        if (whitelist.isBeaconingSuppressed(dstIP)) return;
+
         String flowKey = srcIP + "->" + dstIP + ":" + port;
 
         Deque<Long> times = flowHistory.computeIfAbsent(flowKey, k -> new ArrayDeque<>());

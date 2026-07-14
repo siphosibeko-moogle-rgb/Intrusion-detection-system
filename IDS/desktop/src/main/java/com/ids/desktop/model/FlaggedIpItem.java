@@ -11,8 +11,12 @@ public class FlaggedIpItem {
     private final LongProperty   alertId   = new SimpleLongProperty();
     private final StringProperty ip        = new SimpleStringProperty();
     private final StringProperty mac       = new SimpleStringProperty();
+    private final StringProperty organization = new SimpleStringProperty();
+    private final StringProperty asn       = new SimpleStringProperty();
+    private final StringProperty country   = new SimpleStringProperty();
     private final StringProperty threatType= new SimpleStringProperty();
     private final StringProperty protocol  = new SimpleStringProperty();
+    private final StringProperty severity  = new SimpleStringProperty();
     private final IntegerProperty hits     = new SimpleIntegerProperty();
     private final StringProperty lastSeen  = new SimpleStringProperty();
     private final BooleanProperty selected = new SimpleBooleanProperty(false);
@@ -20,13 +24,18 @@ public class FlaggedIpItem {
     public FlaggedIpItem() {}
 
     public FlaggedIpItem(long alertId, String ip, String mac,
-                         String threatType, String protocol,
+                         String organization, String asn, String country,
+                         String threatType, String protocol, String severity,
                          int hits, String lastSeen) {
         this.alertId.set(alertId);
         this.ip.set(ip);
         this.mac.set(mac);
+        this.organization.set(organization);
+        this.asn.set(asn);
+        this.country.set(country);
         this.threatType.set(threatType);
         this.protocol.set(protocol);
+        this.severity.set(severity);
         this.hits.set(hits);
         this.lastSeen.set(lastSeen);
     }
@@ -35,8 +44,12 @@ public class FlaggedIpItem {
     public LongProperty    alertIdProperty()   { return alertId; }
     public StringProperty  ipProperty()        { return ip; }
     public StringProperty  macProperty()       { return mac; }
+    public StringProperty  organizationProperty() { return organization; }
+    public StringProperty  asnProperty()       { return asn; }
+    public StringProperty  countryProperty()   { return country; }
     public StringProperty  threatTypeProperty(){ return threatType; }
     public StringProperty  protocolProperty()  { return protocol; }
+    public StringProperty  severityProperty()  { return severity; }
     public IntegerProperty hitsProperty()      { return hits; }
     public StringProperty  lastSeenProperty()  { return lastSeen; }
     public BooleanProperty selectedProperty()  { return selected; }
@@ -45,8 +58,12 @@ public class FlaggedIpItem {
     public long   getAlertId()    { return alertId.get(); }
     public String getIp()         { return ip.get(); }
     public String getMac()        { return mac.get(); }
+    public String getOrganization() { return organization.get(); }
+    public String getAsn()        { return asn.get(); }
+    public String getCountry()    { return country.get(); }
     public String getThreatType() { return threatType.get(); }
     public String getProtocol()   { return protocol.get(); }
+    public String getSeverity()   { return severity.get(); }
     public int    getHits()       { return hits.get(); }
     public String getLastSeen()   { return lastSeen.get(); }
     public boolean isSelected()   { return selected.get(); }

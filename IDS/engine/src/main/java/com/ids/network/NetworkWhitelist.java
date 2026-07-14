@@ -77,43 +77,26 @@ public class NetworkWhitelist {
     // is a CIDR block and the engine picks it up on the next refresh. This
     // is what makes trusted infrastructure (CDN/cloud provider ranges)
     // manageable through the application instead of per-IP or in code.
-    private volatile List<Cidr> approvedOrgCidrs = List.of();
+    private volatile List<CidrMatcher> approvedOrgCidrs = List.of();
 
     // Snapshot types returned by the backend loaders (null on any failure).
     private record TrustedDevices(Set<String> ips, Set<String> macs) {}
-    private record OrgWhitelist(Set<String> ips, List<Cidr> cidrs) {}
+    private record OrgWhitelist(Set<String> ips, List<CidrMatcher> cidrs) {}
 
-    /** IPv4 CIDR block. parse() returns null for anything malformed. */
-    private record Cidr(long network, long mask) {
-        static Cidr parse(String s) {
-            int slash = s.indexOf('/');
-            if (slash < 0) return null;
-            long base = ipv4ToLong(s.substring(0, slash));
-            if (base < 0) return null;
-            int prefix;
-            try { prefix = Integer.parseInt(s.substring(slash + 1)); }
-            catch (NumberFormatException e) { return null; }
-            if (prefix < 0 || prefix > 32) return null;
-            long mask = prefix == 0 ? 0 : (0xFFFFFFFFL << (32 - prefix)) & 0xFFFFFFFFL;
-            return new Cidr(base & mask, mask);
-        }
-        boolean contains(long ip) { return ip >= 0 && (ip & mask) == network; }
-    }
+    /**
+     * One row of the trusted_networks table: a curated provider range
+     * (Cloudflare/AWS/Google/Azure/…) loaded from GET /api/trusted-networks.
+     * suppressBeaconing is per-range and defaults to false backend-side:
+     * a provider match quiets unknown-IP/rogue-IP noise only — it must NOT
+     * silence BeaconingDetector unless an admin explicitly opted that range in.
+     */
+    public record TrustedNetworkRange(CidrMatcher cidr, String provider,
+                                      boolean suppressBeaconing) {}
 
-    /** Dotted-quad IPv4 → unsigned 32-bit value; -1 if not IPv4. */
-    private static long ipv4ToLong(String ip) {
-        String[] parts = ip.split("\\.");
-        if (parts.length != 4) return -1;
-        long v = 0;
-        for (String p : parts) {
-            int octet;
-            try { octet = Integer.parseInt(p); }
-            catch (NumberFormatException e) { return -1; }
-            if (octet < 0 || octet > 255) return -1;
-            v = (v << 8) | octet;
-        }
-        return v;
-    }
+    // Replaced wholesale on each successful refresh; kept as-is (last known
+    // good) when the backend is unreachable. volatile so packet threads see
+    // a consistent, fully-built list — never a half-loaded one.
+    private volatile List<TrustedNetworkRange> trustedNetworkRanges = List.of();
 
     public NetworkWhitelist() {
         loadProperties();
@@ -149,6 +132,8 @@ public class NetworkWhitelist {
         } else {
             System.err.println("[Whitelist] Org whitelist refresh failed — keeping previous state");
         }
+        // Keeps last-known-good internally on any failure (same policy).
+        loadTrustedNetworksFromBackend();
     }
 
     private void loadProperties() {
@@ -344,7 +329,7 @@ public class NetworkWhitelist {
                 com.fasterxml.jackson.databind.JsonNode arr =
                     mapper.readTree(response.body());
                 Set<String> ips   = new HashSet<>();
-                List<Cidr>  cidrs = new ArrayList<>();
+                List<CidrMatcher> cidrs = new ArrayList<>();
                 int count = 0;
                 for (com.fasterxml.jackson.databind.JsonNode node : arr) {
                     boolean approved = node.path("approved").asBoolean(false);
@@ -355,7 +340,7 @@ public class NetworkWhitelist {
                         // Cloudflare/AWS range added by an admin); anything
                         // else stays an exact-IP match as before.
                         if (n.contains("/")) {
-                            Cidr cidr = Cidr.parse(n);
+                            CidrMatcher cidr = CidrMatcher.parse(n);
                             if (cidr != null) {
                                 cidrs.add(cidr);
                                 count++;
@@ -380,6 +365,61 @@ public class NetworkWhitelist {
         return null;
     }
 
+    private void loadTrustedNetworksFromBackend() {
+        if (backendToken.isBlank()) return;
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(backendUrl + "/api/trusted-networks"))
+                .header("Authorization", backendToken)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request,
+                HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                System.err.println("[Whitelist] Could not load trusted networks: "
+                    + "backend returned HTTP " + response.statusCode()
+                    + " — keeping previous " + trustedNetworkRanges.size() + " range(s)");
+                return;
+            }
+
+            com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.databind.JsonNode arr =
+                mapper.readTree(response.body());
+
+            // Build the full list first, then swap — a parse failure or a
+            // transient backend hiccup must never wipe the trust the packet
+            // path is currently using (same keep-last-known-good behavior
+            // as the other backend loads in this class).
+            List<TrustedNetworkRange> loaded = new ArrayList<>();
+            for (com.fasterxml.jackson.databind.JsonNode node : arr) {
+                if (!node.path("enabled").asBoolean(false)) continue;
+                String cidrText = node.path("cidr").asText(null);
+                if (cidrText == null || cidrText.isBlank()) continue;
+                CidrMatcher cidr = CidrMatcher.parse(cidrText);
+                if (cidr == null) {
+                    System.err.println("[Whitelist] IGNORING invalid CIDR in "
+                        + "trusted_networks: '" + cidrText + "'");
+                    continue;
+                }
+                loaded.add(new TrustedNetworkRange(cidr,
+                    node.path("provider").asText("?"),
+                    node.path("suppressBeaconing").asBoolean(false)));
+            }
+            trustedNetworkRanges = List.copyOf(loaded);
+            System.out.printf("[Whitelist] Loaded %d trusted network range(s)%n",
+                loaded.size());
+
+        } catch (Exception e) {
+            System.err.println("[Whitelist] Could not load trusted networks: "
+                + e.getMessage() + " — keeping previous "
+                + trustedNetworkRanges.size() + " range(s)");
+        }
+    }
+
     public boolean isTrusted(String ip) {
         // Fail CLOSED: a packet whose source IP couldn't be parsed must not
         // be treated as trusted — that was a bypass for malformed/crafted packets.
@@ -398,9 +438,52 @@ public class NetworkWhitelist {
         String n = normalize(ip);
         if (approvedOrgIps.contains(n)) return true;
         if (approvedOrgCidrs.isEmpty()) return false;
-        long v = ipv4ToLong(n);
-        for (Cidr cidr : approvedOrgCidrs) {
-            if (cidr.contains(v)) return true;
+        long v = CidrMatcher.ipv4ToLong(n);
+        for (CidrMatcher cidr : approvedOrgCidrs) {
+            if (cidr.matches(v)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True if this IP falls inside any ENABLED trusted_networks range
+     * (Cloudflare/AWS/Google/Azure/… CIDRs curated by an admin).
+     *
+     * SCOPE — deliberately narrow: this only quiets unknown-IP / rogue-IP
+     * noise in WhitelistViolationDetector. Do NOT use it as a bypass in any
+     * other detector (scan detection, SQLi, brute force, DNS, HTTP payload
+     * analysis) — C2 infrastructure hides on big-provider ranges precisely
+     * because defenders whitelist them. Beaconing has its own per-range
+     * opt-in via isBeaconingSuppressed().
+     *
+     * Plain O(n) scan: the range count is dozens, not millions, and the
+     * per-range check is a masked compare on a pre-parsed long.
+     */
+    public boolean isTrustedNetwork(String ip) {
+        if (ip == null) return false;
+        List<TrustedNetworkRange> ranges = trustedNetworkRanges;
+        if (ranges.isEmpty()) return false;
+        long v = CidrMatcher.ipv4ToLong(normalize(ip));
+        if (v < 0) return false;
+        for (TrustedNetworkRange range : ranges) {
+            if (range.cidr().matches(v)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True only if a matching trusted_networks range has
+     * suppress_beaconing explicitly set. A provider match alone returns
+     * false — BeaconingDetector keeps watching those destinations.
+     */
+    public boolean isBeaconingSuppressed(String ip) {
+        if (ip == null) return false;
+        List<TrustedNetworkRange> ranges = trustedNetworkRanges;
+        if (ranges.isEmpty()) return false;
+        long v = CidrMatcher.ipv4ToLong(normalize(ip));
+        if (v < 0) return false;
+        for (TrustedNetworkRange range : ranges) {
+            if (range.suppressBeaconing() && range.cidr().matches(v)) return true;
         }
         return false;
     }
@@ -429,8 +512,8 @@ public class NetworkWhitelist {
     //    CIDR, or at least end the prefix with a dot.
     private static boolean matchesSubnetEntry(String entry, String normalizedIp) {
         if (entry.contains("/")) {
-            Cidr cidr = Cidr.parse(entry);
-            return cidr != null && cidr.contains(ipv4ToLong(normalizedIp));
+            CidrMatcher cidr = CidrMatcher.parse(entry);
+            return cidr != null && cidr.matches(normalizedIp);
         }
         return normalizedIp.startsWith(entry);
     }

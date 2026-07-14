@@ -65,6 +65,18 @@ public class DataLoader {
         });
     }
 
+    public void loadTrustedNetworks(Consumer<List<TrustedNetworkItem>> onLoaded,
+                                    Consumer<String> onError) {
+        thread("ids-load-trusted-networks", () -> {
+            try {
+                List<TrustedNetworkItem> items = backend.fetchTrustedNetworks();
+                Platform.runLater(() -> onLoaded.accept(items));
+            } catch (Exception e) {
+                Platform.runLater(() -> onError.accept(e.getMessage()));
+            }
+        });
+    }
+
     /**
      * Loads forensic cases.
      * BackendClient is responsible for mapping JSON into CaseItem objects.

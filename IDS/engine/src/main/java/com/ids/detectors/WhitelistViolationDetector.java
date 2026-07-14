@@ -49,6 +49,10 @@ public class WhitelistViolationDetector implements Detector {
 
         boolean trusted = whitelist.isTrusted(srcIP);
         boolean approvedOrg = whitelist.isApprovedOrg(srcIP);
+        // Curated provider CIDR ranges (trusted_networks table). Scope is
+        // deliberately limited to the UNKNOWN_IP/OUTSIDE_SUBNET noise checks
+        // in THIS detector — see the note on NetworkWhitelist.isTrustedNetwork().
+        boolean trustedNet = whitelist.isTrustedNetwork(srcIP);
         boolean isInternal = whitelist.isInternal(srcIP);
         boolean isExternal  = !isRFC1918(srcIP); // public internet IP
         long    now         = System.currentTimeMillis();
@@ -65,7 +69,8 @@ public class WhitelistViolationDetector implements Detector {
         // Only alert on internal IPs we don't recognise.
         // We do NOT alert on external IPs being unknown — the entire
         // internet is "unknown" and that's expected.
-        if (isInternal && !trusted && shouldAlert("IP:" + srcIP, now, DEVICE_COOLDOWN_MS)) {
+        if (isInternal && !trusted && !trustedNet
+                && shouldAlert("IP:" + srcIP, now, DEVICE_COOLDOWN_MS)) {
             alertManager.raise(new ThreatEvent(
                 ThreatType.UNKNOWN_IP, srcIP, srcMac,
                 dstIP, null, 1, 0,
@@ -112,6 +117,7 @@ public class WhitelistViolationDetector implements Detector {
         if (!isExternal          // it IS a private/RFC1918 address
                 && !isInternal   // but NOT from your subnet
                 && !trusted
+                && !trustedNet
                 && shouldAlert("ROGUE:" + srcIP, now)) {
             alertManager.raise(new ThreatEvent(
                 ThreatType.OUTSIDE_SUBNET, srcIP, srcMac,
