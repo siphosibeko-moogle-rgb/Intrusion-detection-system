@@ -35,7 +35,8 @@ public class BackendClient {
     private final String baseUrl;
     private final OkHttpClient http;
     private final ObjectMapper mapper = new ObjectMapper();
-    private String jwtToken = "";
+    // volatile: read by FX thread, pollers and WS-driven handlers while silentReLogin() rewrites it
+    private volatile String jwtToken = "";
 
     public void invalidateSession() {
         jwtToken = "";
@@ -388,16 +389,25 @@ public class BackendClient {
     // (an explicit logout). This lets a single rejected/expired token be
     // silently repaired without forcing the user back to the login screen —
     // see executeWithRetry() below.
-    private String username, password;
+    private volatile String username, password;
 
     // ── HTTP HELPERS ──────────────────────────────────────────────────────
 
-    private boolean silentReLogin() {
-        if (username == null || password == null) return false;
-        try {
-            return login(username, password);
-        } catch (IOException e) {
-            return false;
+    // Single-flight guard: concurrent 401s must not race into parallel /api/auth/login calls
+    private final Object reLoginLock = new Object();
+
+    private boolean silentReLogin(String tokenAtCall) {
+        synchronized (reLoginLock) {
+            // Another thread already logged in successfully — reuse it.
+            if (!jwtToken.equals(tokenAtCall) && !jwtToken.isEmpty()) {
+                return true;
+            }
+            if (username == null || password == null) return false;
+            try {
+                return login(username, password);
+            } catch (IOException e) {
+                return false;
+            }
         }
     }
 
@@ -407,10 +417,13 @@ public class BackendClient {
      *  the retry must rebuild the Authorization header with the fresh token,
      *  not resend the one that just got rejected. */
     private Response executeWithRetry(java.util.function.Supplier<Request> requestBuilder) throws IOException {
+        // Capture the token used for this call so silentReLogin can tell whether
+        // another thread already refreshed it (avoids duplicate login storms).
+        String tokenAtCall = jwtToken;
         Response resp = http.newCall(requestBuilder.get()).execute();
         if (resp.code() == 401) {
             resp.close();
-            if (silentReLogin()) {
+            if (silentReLogin(tokenAtCall)) {
                 resp = http.newCall(requestBuilder.get()).execute();
             } else {
                 throw new IOException("Session expired — please log in again");
