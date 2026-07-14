@@ -74,6 +74,9 @@ public class BackendClient {
     public boolean isLoggedIn() { return !jwtToken.isEmpty(); }
     public String getBaseUrl() { return baseUrl; }
 
+    /** Username of the last successful login, or null if never logged in. */
+    public String getUsername() { return username; }
+
     // ── CASE DETAIL PANEL SUPPORT ────────────────────────────────────────────
     // CaseDetailPanel.java (com.ids.desktop.controller) needs raw GET/POST/PUT/
     // DELETE access with the JSON body already serialized by the caller (unlike
@@ -301,6 +304,20 @@ public class BackendClient {
             ));
         }
         return list;
+    }
+
+    // ── WHITELIST PROPERTIES (backend-owned ids-whitelist.properties) ────
+    // Whole-file raw-text round trip, wrapped in {"content": ...} JSON so
+    // comments/blank lines survive transport unchanged.
+
+    public String getWhitelistProperties() throws IOException {
+        JsonNode node = mapper.readTree(get("/api/config/whitelist-properties"));
+        return textOf(node, "content", "");
+    }
+
+    public void putWhitelistProperties(String raw) throws IOException {
+        put("/api/config/whitelist-properties",
+            mapper.writeValueAsString(Map.of("content", raw)));
     }
 
     // ── IP PROFILE / TIMELINE ─────────────────────────────────────────────

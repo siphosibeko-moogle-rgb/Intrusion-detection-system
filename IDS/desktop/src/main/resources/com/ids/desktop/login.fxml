@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml"
+      fx:controller="com.ids.desktop.controller.LoginController"
+      spacing="12" prefWidth="380"
+      style="-fx-padding:24; -fx-background-color:#ffffff;">
+
+    <Label text="IDS Monitor — Sign in"
+           style="-fx-font-size:16; -fx-font-weight:bold; -fx-text-fill:#111827;"/>
+
+    <TextField     fx:id="tfBackendUrl"
+                   promptText="Backend URL"
+                   text="http://localhost:8080"/>
+    <TextField     fx:id="tfUsername"
+                   promptText="Username"/>
+    <PasswordField fx:id="pfPassword"
+                   promptText="Password"/>
+
+    <Button text="Login"
+            onAction="#onLogin"
+            defaultButton="true"
+            maxWidth="Infinity"/>
+
+    <Label fx:id="lblLoginStatus" wrapText="true"/>
+
+</VBox>

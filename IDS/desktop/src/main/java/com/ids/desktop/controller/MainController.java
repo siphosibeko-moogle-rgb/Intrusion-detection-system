@@ -75,11 +75,10 @@ public class MainController implements Initializable {
     @FXML private Label            lblCaseStatus;
     @FXML private TabPane          tabPane;
 
-    // Settings / login
-    @FXML private TextField     tfBackendUrl;
-    @FXML private TextField     tfUsername;
-    @FXML private PasswordField pfPassword;
-    @FXML private Label         lblLoginStatus;
+    // Header status + Settings (whitelist properties editor)
+    @FXML private Label    lblStatus;
+    @FXML private TextArea taWhitelistProps;
+    @FXML private Label    lblSettingsStatus;
     @FXML private void onOpenAlertGroups() { openAlertGroups(); }
 
     // ── STATE ─────────────────────────────────────────────────────────────────
@@ -145,7 +144,7 @@ public class MainController implements Initializable {
 
         whitelistManager = new WhitelistPanelManager(
                 () -> dataLoader, () -> backend, this::isReady,
-                msg -> lblLoginStatus.setText(msg));
+                this::setStatus);
         whitelistManager.bindMyWhitelist(myWhitelistTable,
                 colMyWlIp, colMyWlMac, colMyWlLabel, colMyWlAddedAt,
                 tfNewMyWlIp, tfNewMyWlMac, tfNewMyWlLabel, tfFilterWlIp);
@@ -182,41 +181,35 @@ public class MainController implements Initializable {
         setupSidePanels();
     }
 
-    // ── LOGIN ─────────────────────────────────────────────────────────────────
+    // ── SESSION START ─────────────────────────────────────────────────────────
 
-    @FXML
-    private void onLogin() {
-        String user = tfUsername.getText().trim();
-        String pass = pfPassword.getText();
+    /**
+     * Entry point called by IDSDesktopApp after the login window has already
+     * authenticated. Receives the authenticated BackendClient + DataLoader so
+     * the app logs in exactly once; all post-login wiring lives in
+     * onSessionReady() — the ONE post-login code path.
+     */
+    public void startWithSession(BackendClient backend, DataLoader loader) {
+        this.backend    = backend;
+        this.dataLoader = loader;
+        onSessionReady(backend.getUsername());
+    }
 
-        if (user.isEmpty() || pass.isEmpty()) {
-            lblLoginStatus.setText("Username and password required");
-            return;
-        }
-        lblLoginStatus.setText("Connecting...");
-        backend    = new BackendClient(backendUrl());
-        dataLoader = new DataLoader(backend);
+    private void onSessionReady(String user) {
+        setStatus("Logged in as " + user);
+        lblUser.setText(user);
 
-        dataLoader.login(user, pass,
-                () -> {
-                    lblLoginStatus.setText("Logged in as " + user);
-                    lblUser.setText(user);
-                    
-                    investigationPanel.setBackend(backend);
-                    caseDetailPanel.setBackend(backend);
-                    dashboardPanel.setBackend(backend);
-                    dashboardPanel.start();
-                    healthPoller = new HealthPoller(backend);
-                    healthPoller.addListener(healthWidget::update);
-                    healthPoller.start();
-                    loadAllData();
-                    startLiveFeed();
-                    startPolling();
-                },
-                msg -> {
-                    lblLoginStatus.setText("Connection failed: " + msg);
-                    
-                });
+        investigationPanel.setBackend(backend);
+        caseDetailPanel.setBackend(backend);
+        dashboardPanel.setBackend(backend);
+        dashboardPanel.start();
+        healthPoller = new HealthPoller(backend);
+        healthPoller.addListener(healthWidget::update);
+        healthPoller.start();
+        loadAllData();
+        startLiveFeed();
+        startPolling();
+        onReloadWhitelistProps();
     }
 
     // ── DATA LOADING ──────────────────────────────────────────────────────────
@@ -243,7 +236,7 @@ public class MainController implements Initializable {
 
     private void startLiveFeed() {
         try {
-            String wsUrl = backendUrl()
+            String wsUrl = backend.getBaseUrl()
                     .replace("http://",  "ws://")
                     .replace("https://", "wss://")
                     + "/ws/websocket";
@@ -363,15 +356,15 @@ public class MainController implements Initializable {
     private void onDismissAlert() {
         AlertItem selected = alertTable.getSelectionModel().getSelectedItem();
         if (selected == null) return;
-        if (!isReady()) { lblLoginStatus.setText("Not connected"); return; }
+        if (!isReady()) { setStatus("Not connected"); return; }
         if (selected.getId() <= 0) {
-            lblLoginStatus.setText("Cannot dismiss: no database ID — press Refresh first.");
+            setStatus("Cannot dismiss: no database ID — press Refresh first.");
             return;
         }
         dataLoader.submit("ids-dismiss-alert",
                 () -> backend.deleteAlertSummary(selected.getId()),
-                () -> lblLoginStatus.setText("Alert dismissed from database."),
-                err -> lblLoginStatus.setText("Dismiss failed: " + err));}
+                () -> setStatus("Alert dismissed from database."),
+                err -> setStatus("Dismiss failed: " + err));}
     /**
      * Clears the dashboard TABLE VIEW only. The database is NOT touched.
      *
@@ -386,7 +379,7 @@ public class MainController implements Initializable {
         allAlerts.clear();            // clears Alerts tab   — DB untouched
                     // clears Attackers tab — DB untouched
         alertManager.rebuildIndex();  // reset dedup index so next upsertAlert() works cleanly
-        lblLoginStatus.setText("View cleared. Data preserved in database.");
+        setStatus("View cleared. Data preserved in database.");
     }
 
     // ── WHITELIST ACTIONS — thin delegations to WhitelistPanelManager ─────────
@@ -402,24 +395,44 @@ public class MainController implements Initializable {
     @FXML private void onCreateCase() { caseBoard.createCase(); }
     @FXML private void onCloseCase()  { caseBoard.closeSelectedCase(); }
 
+    // ── SETTINGS: ids-whitelist.properties EDITOR ─────────────────────────────
+    // Whole-file raw-text round trip via GET/PUT /api/config/whitelist-properties
+    // so comments and blank lines in the backend file are preserved.
+
+    @FXML
+    private void onReloadWhitelistProps() {
+        if (!isReady()) { lblSettingsStatus.setText("Not connected"); return; }
+        lblSettingsStatus.setText("Loading…");
+        final String[] holder = new String[1];
+        dataLoader.submit("ids-load-whitelist-props",
+                () -> holder[0] = backend.getWhitelistProperties(),
+                () -> {
+                    taWhitelistProps.setText(holder[0]);
+                    lblSettingsStatus.setText("Loaded from backend.");
+                },
+                err -> lblSettingsStatus.setText("Load failed: " + err));
+    }
+
+    @FXML
+    private void onSaveWhitelistProps() {
+        if (!isReady()) { lblSettingsStatus.setText("Not connected"); return; }
+        lblSettingsStatus.setText("Saving…");
+        final String raw = taWhitelistProps.getText();
+        dataLoader.submit("ids-save-whitelist-props",
+                () -> backend.putWhitelistProperties(raw),
+                () -> lblSettingsStatus.setText("Saved. Backend reloaded whitelist."),
+                err -> lblSettingsStatus.setText("Save failed: " + err));
+    }
+
     // ── HELPERS ───────────────────────────────────────────────────────────────
 
     private boolean isReady() { return backend != null && backend.isLoggedIn(); }
 
-    /**
-     * Backend URL from the Settings tab, falling back to the default.
-     * FIX: tfBackendUrl was FXML-bound but never read — typing a custom
-     * backend address in Settings had no effect; login always went to
-     * localhost:8080.
-     */
-    private String backendUrl() {
-        String url = tfBackendUrl != null ? tfBackendUrl.getText() : null;
-        if (url == null || url.isBlank()) return BACKEND_URL;
-        url = url.trim();
-        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
-    }
+    /** Header status label — the single landing spot for status/error text
+     *  now that the old Settings-tab lblLoginStatus is gone. */
+    private void setStatus(String msg) { lblStatus.setText(msg); }
 
-    
+
 
     private String fmtInstantSafe(String raw) {
         if (raw == null || raw.isBlank()) return FMT.format(Instant.now());
@@ -428,7 +441,7 @@ public class MainController implements Initializable {
     }
 
     private void handleSessionError(String prefix, String msg) {
-        lblLoginStatus.setText(prefix + ": " + msg);
+        setStatus(prefix + ": " + msg);
         if (msg != null && msg.contains("Session expired"))
             backend.invalidateSession();
     }
