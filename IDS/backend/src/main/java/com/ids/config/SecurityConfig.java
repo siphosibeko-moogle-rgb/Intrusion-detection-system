@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -14,6 +15,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 @Configuration
 @EnableWebSecurity
+// Enables @PreAuthorize so destructive endpoints can be restricted to ADMIN.
+@EnableMethodSecurity
 public class SecurityConfig {
 
     private final JwtFilter jwtFilter;
@@ -46,12 +49,16 @@ public class SecurityConfig {
 
             .authorizeHttpRequests(auth -> auth
                     // Public — no JWT required
+                    // Only health/info are public; other actuator endpoints
+                    // (env, heapdump, ...) leak secrets so they need a JWT.
+                    // /api/my-whitelist removed from permitAll: it exposed
+                    // read/write/delete of trusted devices unauthenticated.
                     .requestMatchers(
                         "/api/auth/login",
                         "/api/auth/register",
-                        "/actuator/**",
+                        "/actuator/health",
+                        "/actuator/info",
                         "/api/alerts/ingest",    // engine uses X-Engine-Key, validated in controller
-                        "/api/my-whitelist",
                         "/ws/**"
                     ).permitAll()
 

@@ -2,11 +2,13 @@ package com.ids.security;
 
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 
@@ -21,7 +23,22 @@ public class JwtUtil {
     @Value("${ids.jwt.expiration}")
     private long expirationMs;
 
-    private Key key() { return Keys.hmacShaKeyFor(secret.getBytes()); }
+    // Fail fast at startup: a missing/short HS256 secret would otherwise only
+    // blow up on first login (jjwt requires >= 32 bytes) and is brute-forceable.
+    @PostConstruct
+    void validateSecret() {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                "JWT secret is not configured. Set IDS_JWT_SECRET to a random value of at least 32 bytes.");
+        }
+        if (secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException(
+                "JWT secret is too short for HS256 (" + secret.getBytes(StandardCharsets.UTF_8).length
+                + " bytes). Set IDS_JWT_SECRET to a random value of at least 32 bytes.");
+        }
+    }
+
+    private Key key() { return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)); }
 
     public String generate(String username, String role) {
         return Jwts.builder()
