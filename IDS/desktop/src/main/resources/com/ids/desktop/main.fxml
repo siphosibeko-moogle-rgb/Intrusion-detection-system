@@ -11,6 +11,7 @@
     <top>
     <HBox spacing="15" alignment="CENTER_LEFT" style="-fx-padding:10 16; -fx-background-color:#ffffff; -fx-border-color:#e5e7eb; -fx-border-width:0 0 1 0;">
         <Label text="IDS" style="-fx-font-size:16; -fx-font-weight:bold; -fx-text-fill:#111827;"/>
+        <Label fx:id="lblStatus" style="-fx-text-fill:#6b7280;"/>
         <Pane HBox.hgrow="ALWAYS"/>
         <StackPane fx:id="healthHost"/>
         <Label fx:id="lblUser" text="User" style="-fx-text-fill:#374151;"/>
@@ -271,17 +272,20 @@
     </VBox>
 </Tab>
 
-                <!-- SETTINGS -->
+                <!-- SETTINGS: backend ids-whitelist.properties editor -->
                 <Tab text="Settings">
                     <VBox spacing="10" style="-fx-padding:10;">
-                        <TextField     fx:id="tfBackendUrl"
-                                       promptText="Backend URL"/>
-                        <TextField     fx:id="tfUsername"
-                                       promptText="Username"/>
-                        <PasswordField fx:id="pfPassword"
-                                       promptText="Password"/>
-                        <Button text="Login" onAction="#onLogin"/>
-                        <Label fx:id="lblLoginStatus"/>
+                        <Label text="Network Whitelist (ids-whitelist.properties)"
+                               style="-fx-font-weight:bold;"/>
+                        <TextArea fx:id="taWhitelistProps"
+                                  wrapText="false"
+                                  VBox.vgrow="ALWAYS"
+                                  style="-fx-font-family:'monospace';"/>
+                        <HBox spacing="8">
+                            <Button text="Reload" onAction="#onReloadWhitelistProps"/>
+                            <Button text="Save"   onAction="#onSaveWhitelistProps"/>
+                        </HBox>
+                        <Label fx:id="lblSettingsStatus"/>
                     </VBox>
                 </Tab>
 
