@@ -84,6 +84,13 @@
     	<artifactId>spring-boot-starter-mail</artifactId>
 	</dependency>
 
+    <!-- Tests (JUnit 5 + Mockito, version-managed by the Boot parent) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
   </dependencies>
 
   <build>
