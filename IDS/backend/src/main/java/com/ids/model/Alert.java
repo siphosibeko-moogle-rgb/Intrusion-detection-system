@@ -47,6 +47,13 @@ public class Alert {
     private String ruleVersion;
     private String mitreAttack;
 
+    // ── Throttle dedupe (trusted sources) ────────────────────────────────
+    // A SUPPRESSed repeat bumps these on the open alert instead of
+    // inserting a new row. Rows from before these columns existed are
+    // backfilled to 1 by db/alert_throttle_schema.sql.
+    private Integer occurrenceCount = 1;
+    private Instant lastSeen;
+
     // ── Analyst verification / false-positive tracking ──────────────────
     // UNVERIFIED → CONFIRMED | FALSE_POSITIVE. Feeds accuracy reporting and
     // gives any future ML pipeline labelled training data.
@@ -57,8 +64,10 @@ public class Alert {
     private Instant verifiedAt;
 
     @PrePersist
-    public void prePersist() { 
+    public void prePersist() {
     	if (timestamp == null) timestamp = Instant.now();
+    	if (occurrenceCount == null) occurrenceCount = 1;
+    	if (lastSeen == null) lastSeen = timestamp;
     	}
 
     public Long getId()  { 
@@ -137,6 +146,11 @@ public class Alert {
     public void setTimestamp(Instant v){
     	timestamp = v;
     	}
+
+    public Integer getOccurrenceCount()            { return occurrenceCount; }
+    public void setOccurrenceCount(Integer v)      { occurrenceCount = v; }
+    public Instant getLastSeen()                   { return lastSeen; }
+    public void setLastSeen(Instant v)             { lastSeen = v; }
 
     public Integer getConfidenceScore()            { return confidenceScore; }
     public void setConfidenceScore(Integer v)      { confidenceScore = v; }

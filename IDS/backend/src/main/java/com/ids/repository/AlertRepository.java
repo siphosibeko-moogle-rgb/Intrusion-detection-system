@@ -2,6 +2,7 @@ package com.ids.repository;
 
 import com.ids.model.Alert;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -98,4 +99,23 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
            "   OR (a.sourceIp = :ip2 AND a.destIp = :ip1) " +
            "ORDER BY a.timestamp ASC")
     List<Alert> findConversation(@Param("ip1") String ip1, @Param("ip2") String ip2);
+
+    /**
+     * Throttle SUPPRESS path: fold a deduped repeat into the most recent
+     * matching alert instead of inserting a new row. Returns 0 when no
+     * matching alert exists yet (caller falls back to a normal insert).
+     */
+    @Modifying
+    @Query(value = """
+        UPDATE alerts
+           SET occurrence_count = COALESCE(occurrence_count, 1) + 1,
+               last_seen        = :seenAt
+         WHERE id = (SELECT id FROM alerts
+                     WHERE source_ip = :sourceIp AND threat_type = :threatType
+                     ORDER BY timestamp DESC
+                     LIMIT 1)
+        """, nativeQuery = true)
+    int incrementLatestOccurrence(@Param("sourceIp")   String sourceIp,
+                                  @Param("threatType") String threatType,
+                                  @Param("seenAt")     Instant seenAt);
 }

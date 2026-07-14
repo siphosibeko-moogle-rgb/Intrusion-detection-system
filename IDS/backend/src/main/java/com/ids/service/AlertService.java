@@ -22,15 +22,18 @@ public class AlertService {
     private final SimpMessagingTemplate  ws;
     private final EmailAlertService      emailService;
     private final AlertSummaryRepository summaryRepo;
+    private final AlertThrottleService   throttle;
 
     public AlertService(AlertRepository repo,
                         SimpMessagingTemplate ws,
                         EmailAlertService emailService,
-                        AlertSummaryRepository summaryRepo) {
+                        AlertSummaryRepository summaryRepo,
+                        AlertThrottleService throttle) {
         this.repo         = repo;
         this.ws           = ws;
         this.emailService = emailService;
         this.summaryRepo  = summaryRepo;
+        this.throttle     = throttle;
     }
 
     // ── Flagged IPs (UNKNOWN_IP / OUTSIDE_SUBNET) ─────────────────────────
@@ -39,7 +42,62 @@ public class AlertService {
     }
 
     // ── Core alert persistence ────────────────────────────────────────────
+    /**
+     * Ingestion entry point. Alerts from WHITELISTED sources pass through
+     * the throttle first; everything else takes the normal path unchanged
+     * (evaluate() returns EMIT_LOW without touching the throttle table).
+     */
+    @Transactional
     public Alert save(Alert alert) {
+        switch (throttle.evaluate(alert)) {
+            case SUPPRESS -> {
+                // Deduped repeat from a trusted host: fold it into the most
+                // recent matching open alert — no new row, no broadcast.
+                int folded = repo.incrementLatestOccurrence(
+                        alert.getSourceIp(), alert.getThreatType(), Instant.now());
+                if (folded > 0) return alert;
+                // No open alert to fold into (e.g. table was cleared
+                // mid-window) — fall through to a normal emit rather than
+                // dropping the event on the floor.
+                return persistAndBroadcast(alert);
+            }
+            case ESCALATE -> {
+                // The trusted host crossed the threshold: emit ONE new HIGH
+                // alert. The throttle guarantees this branch is taken exactly
+                // once per window per key.
+                return persistAndBroadcast(escalationOf(alert));
+            }
+            default -> {
+                // EMIT_LOW: normal/base severity, normal pipeline.
+                return persistAndBroadcast(alert);
+            }
+        }
+    }
+
+    /** Builds the escalated HIGH alert emitted when a trusted source crosses the threshold. */
+    private Alert escalationOf(Alert src) {
+        Alert esc = new Alert();
+        esc.setThreatType (src.getThreatType());
+        esc.setSourceIp   (src.getSourceIp());
+        esc.setSourceMac  (src.getSourceMac());
+        esc.setDestIp     (src.getDestIp());
+        esc.setDestMac    (src.getDestMac());
+        esc.setProtocol   (src.getProtocol());
+        esc.setRequestType(src.getRequestType());
+        esc.setPacketCount(src.getPacketCount());
+        esc.setWindowMs   (src.getWindowMs());
+        esc.setSeverity   ("HIGH");
+        esc.setDetails    ("Trusted host " + src.getSourceIp()
+                + " crossed the alert-rate threshold for " + src.getThreatType()
+                + " — possible compromise. Original: " + src.getDetails());
+        esc.setTimestamp  (Instant.now());
+        esc.setDetectedBy ("ALERT_THROTTLE");
+        esc.setRuleVersion(src.getRuleVersion());
+        esc.setMitreAttack(src.getMitreAttack());
+        return esc;
+    }
+
+    private Alert persistAndBroadcast(Alert alert) {
         // 1. Always persist the raw event — this is what powers the
         //    Investigation Panel (ip-profile / timeline). Unchanged.
         Alert saved = repo.save(alert);
