@@ -272,23 +272,6 @@
     </VBox>
 </Tab>
 
-                <!-- SETTINGS: backend ids-whitelist.properties editor -->
-                <Tab text="Settings">
-                    <VBox spacing="10" style="-fx-padding:10;">
-                        <Label text="Network Whitelist (ids-whitelist.properties)"
-                               style="-fx-font-weight:bold;"/>
-                        <TextArea fx:id="taWhitelistProps"
-                                  wrapText="false"
-                                  VBox.vgrow="ALWAYS"
-                                  style="-fx-font-family:'monospace';"/>
-                        <HBox spacing="8">
-                            <Button text="Reload" onAction="#onReloadWhitelistProps"/>
-                            <Button text="Save"   onAction="#onSaveWhitelistProps"/>
-                        </HBox>
-                        <Label fx:id="lblSettingsStatus"/>
-                    </VBox>
-                </Tab>
-
             </TabPane>
 
         </VBox>

@@ -3,7 +3,6 @@ package com.ids.desktop.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.paint.Color;

@@ -8,7 +8,6 @@ import javafx.scene.control.cell.PropertyValueFactory;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 public class AlertTableManager {
 

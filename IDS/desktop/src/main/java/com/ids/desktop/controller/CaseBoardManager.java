@@ -10,7 +10,6 @@ import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -102,14 +101,16 @@ public class CaseBoardManager {
         table.setItems(filteredCases);
         table.setPlaceholder(new Label("No forensic cases opened yet."));
 
-        // Double-click opens the detail panel
+        // Single- or double-click opens the detail panel; PRIMARY guard keeps
+        // right-click (context menu) from also firing the opener
         table.setRowFactory(tv -> {
             TableRow<CaseItem> row = new TableRow<>();
             row.setOnMouseClicked(event -> {
-                if (event.getClickCount() == 2 && !row.isEmpty()) {
-                    CaseItem item = row.getItem();
-                    opener.open(item.getId(), item.getCaseNumber());
-                }
+                if (row.isEmpty()) return;
+                if (event.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
+                CaseItem item = row.getItem();
+                if (item == null) return;
+                opener.open(item.getId(), item.getCaseNumber());
             });
             return row;
         });

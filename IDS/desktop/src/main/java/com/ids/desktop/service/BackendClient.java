@@ -378,20 +378,6 @@ public class BackendClient {
         return list;
     }
 
-    // ── WHITELIST PROPERTIES (backend-owned ids-whitelist.properties) ────
-    // Whole-file raw-text round trip, wrapped in {"content": ...} JSON so
-    // comments/blank lines survive transport unchanged.
-
-    public String getWhitelistProperties() throws IOException {
-        JsonNode node = mapper.readTree(get("/api/config/whitelist-properties"));
-        return textOf(node, "content", "");
-    }
-
-    public void putWhitelistProperties(String raw) throws IOException {
-        put("/api/config/whitelist-properties",
-            mapper.writeValueAsString(Map.of("content", raw)));
-    }
-
     // ── IP PROFILE / TIMELINE ─────────────────────────────────────────────
 
     public JsonNode getIpProfile(String ip) throws Exception {
@@ -477,6 +463,12 @@ public class BackendClient {
                 .build())) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
         }
+    }
+
+    /** Raw PATCH with a pre-serialized JSON body — delegates to patchJson(),
+     *  which already carries the executeWithRetry 401-repair wrapper. */
+    public void patch(String path, String json) throws IOException {
+        patchJson(path, json);
     }
 
     public void delete(String path) throws IOException {

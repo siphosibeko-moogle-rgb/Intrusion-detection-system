@@ -231,10 +231,9 @@ public class AlertGroupsPanel extends VBox {
         return c;
     }
 
-    @SuppressWarnings("unchecked")
     private TableColumn<AlertGroupItem, Number> numCol(String header, String prop, double width) {
         TableColumn<AlertGroupItem, Number> c = new TableColumn<>(header);
-        c.setCellValueFactory(new PropertyValueFactory(prop));
+        c.setCellValueFactory(new PropertyValueFactory<>(prop));
         c.setPrefWidth(width);
         c.setStyle("-fx-text-fill: #c9d1d9;");
         return c;

@@ -25,7 +25,6 @@ public class PacketRecord {
     private final List<Long> nullEvents = new ArrayList<>();
     private final List<Long> xmasEvents = new ArrayList<>();
     private final List<Long> udpEvents = new ArrayList<>();
-    private final List<Long> osProbeEvents = new ArrayList<>();
     private final List<Long> establishedEvents = new ArrayList<>();
 
     //DNS

@@ -82,10 +82,8 @@ public class MainController implements Initializable {
     @FXML private Label            lblCaseStatus;
     @FXML private TabPane          tabPane;
 
-    // Header status + Settings (whitelist properties editor)
+    // Header status
     @FXML private Label    lblStatus;
-    @FXML private TextArea taWhitelistProps;
-    @FXML private Label    lblSettingsStatus;
     @FXML private void onOpenAlertGroups() { openAlertGroups(); }
 
     // ── STATE ─────────────────────────────────────────────────────────────────
@@ -228,7 +226,6 @@ public class MainController implements Initializable {
         loadAllData();
         startLiveFeed();
         startPolling();
-        onReloadWhitelistProps();
     }
 
     // ── DATA LOADING ──────────────────────────────────────────────────────────
@@ -450,35 +447,6 @@ public class MainController implements Initializable {
 
     @FXML private void onCreateCase() { caseBoard.createCase(); }
     @FXML private void onCloseCase()  { caseBoard.closeSelectedCase(); }
-
-    // ── SETTINGS: ids-whitelist.properties EDITOR ─────────────────────────────
-    // Whole-file raw-text round trip via GET/PUT /api/config/whitelist-properties
-    // so comments and blank lines in the backend file are preserved.
-
-    @FXML
-    private void onReloadWhitelistProps() {
-        if (!isReady()) { lblSettingsStatus.setText("Not connected"); return; }
-        lblSettingsStatus.setText("Loading…");
-        final String[] holder = new String[1];
-        dataLoader.submit("ids-load-whitelist-props",
-                () -> holder[0] = backend.getWhitelistProperties(),
-                () -> {
-                    taWhitelistProps.setText(holder[0]);
-                    lblSettingsStatus.setText("Loaded from backend.");
-                },
-                err -> lblSettingsStatus.setText("Load failed: " + err));
-    }
-
-    @FXML
-    private void onSaveWhitelistProps() {
-        if (!isReady()) { lblSettingsStatus.setText("Not connected"); return; }
-        lblSettingsStatus.setText("Saving…");
-        final String raw = taWhitelistProps.getText();
-        dataLoader.submit("ids-save-whitelist-props",
-                () -> backend.putWhitelistProperties(raw),
-                () -> lblSettingsStatus.setText("Saved. Backend reloaded whitelist."),
-                err -> lblSettingsStatus.setText("Save failed: " + err));
-    }
 
     // ── HELPERS ───────────────────────────────────────────────────────────────
 

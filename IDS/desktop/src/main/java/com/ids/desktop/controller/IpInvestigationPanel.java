@@ -62,7 +62,6 @@ public class IpInvestigationPanel extends VBox {
 	private final Label lblDetailWindow = info("—");
 	private final Label lblDetailSrc = info("—");
 	private final TextArea txtDetailReason = new TextArea("Select a threat to see why it triggered.");
-	private final VBox packetEvidenceBox = new VBox(6);
 
 	private JsonNode currentThreatNode;
 
@@ -246,16 +245,6 @@ public class IpInvestigationPanel extends VBox {
 				+ "-fx-cursor: hand; -fx-padding: 5 10; -fx-background-radius: 4;");
 		b.setOnAction(handler);
 		return b;
-	}
-
-	private ScrollPane buildPacketEvidenceScroll() {
-		packetEvidenceBox.setStyle("-fx-background-color: #0d1117;");
-		packetEvidenceBox.setPadding(new Insets(4));
-		ScrollPane sp = new ScrollPane(packetEvidenceBox);
-		sp.setFitToWidth(true);
-		sp.setPrefHeight(200);
-		sp.setStyle("-fx-background: #0d1117; -fx-background-color: #0d1117;");
-		return sp;
 	}
 
 	// POPULATION
@@ -512,7 +501,6 @@ public class IpInvestigationPanel extends VBox {
 			lblDetailTs.setText("—");
 			lblDetailWindow.setText("—");
 			txtDetailReason.setText("Select a threat to see why it triggered.");
-			packetEvidenceBox.getChildren().clear();
 		});
 	}
 

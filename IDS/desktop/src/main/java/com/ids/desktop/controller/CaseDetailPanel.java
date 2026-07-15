@@ -22,7 +22,6 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.Consumer;
 import java.util.Map;
 
 /**
@@ -249,11 +248,13 @@ public class CaseDetailPanel extends VBox {
 
         Button btnAssign = mkBtn("Assign", "#1f6feb", e -> {
             String assignee = tfAssign.getText().trim();
-            if (!assignee.isEmpty()) patchCase(Map.of("assignedTo", assignee));
+            if (assignee.isEmpty()) { lblPanelStatus.setText("Enter an analyst username"); return; }
+            assignAnalyst(assignee);
         });
         Button btnStatus = mkBtn("Set Status", "#7c3aed", e -> {
             String s = cbStatus.getValue();
-            if (s != null) patchCase(Map.of("status", s));
+            if (s == null) { lblPanelStatus.setText("Pick a status first"); return; }
+            updateStatus(s);
         });
 
         HBox row1 = new HBox(8, new Label("Assign:"), tfAssign, btnAssign);
@@ -261,13 +262,20 @@ public class CaseDetailPanel extends VBox {
         row1.setAlignment(Pos.CENTER_LEFT);
         row2.setAlignment(Pos.CENTER_LEFT);
         styleLabels(row1, row2);
+        // Override the muted styleLabels colour here only — #8b949e at 11px is
+        // near-invisible on the #161b22 pane background
+        for (HBox row : new HBox[]{ row1, row2 }) {
+            row.getChildrenUnmodifiable().stream()
+               .filter(n -> n instanceof Label)
+               .forEach(n -> ((Label) n).setStyle("-fx-text-fill: #c9d1d9; -fx-font-size: 11;"));
+        }
 
         VBox content = new VBox(8, row1, row2);
         content.setPadding(new Insets(10));
 
         TitledPane pane = new TitledPane("Quick Updates", content);
         pane.setStyle("-fx-text-fill: #c9d1d9; -fx-background-color: #161b22;");
-        pane.setExpanded(false);
+        pane.setExpanded(true);
         return pane;
     }
 
@@ -526,7 +534,7 @@ public class CaseDetailPanel extends VBox {
     private void deleteNote(long noteId) {
         pool.submit(() -> {
             try {
-                backend.delete("/api/forensics/notes/" + noteId);
+                backend.delete("/api/forensics/cases/notes/" + noteId);
                 Platform.runLater(() -> loadDetail(activeCaseId));
             } catch (Exception ex) {
                 Platform.runLater(() ->
@@ -550,17 +558,30 @@ public class CaseDetailPanel extends VBox {
         });
     }
 
-    /**
-     * PATCH the case with a partial update map.
-     * We serialize it to JSON manually to avoid a heavyweight dependency.
-     */
-    private void patchCase(java.util.Map<String, String> fields) {
+    /** PATCH /cases/{id}/status — body {"status": "..."} */
+    private void updateStatus(String status) {
+        submitUpdate("/api/forensics/cases/" + activeCaseId + "/status",
+                     Map.of("status", status),
+                     "Status updated");
+    }
+
+    /** PATCH /cases/{id}/assign — body {"analyst": "..."}  (NOT "assignedTo") */
+    private void assignAnalyst(String analyst) {
+        submitUpdate("/api/forensics/cases/" + activeCaseId + "/assign",
+                     Map.of("analyst", analyst),
+                     "Case assigned");
+    }
+
+    private void submitUpdate(String path, Map<String, String> body, String okMsg) {
+        if (activeCaseId <= 0) {
+            lblPanelStatus.setText("No case loaded");
+            return;
+        }
         pool.submit(() -> {
             try {
-                String body = MAPPER.writeValueAsString(fields);
-                backend.put("/api/forensics/cases/" + activeCaseId, body);
+                backend.patch(path, MAPPER.writeValueAsString(body));
                 Platform.runLater(() -> {
-                    lblPanelStatus.setText("Case updated ✓");
+                    lblPanelStatus.setText(okMsg + " ✓");
                     loadDetail(activeCaseId);
                 });
             } catch (Exception ex) {

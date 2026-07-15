@@ -4,9 +4,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -36,7 +34,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
-import javafx.scene.shape.Circle;
 
 /**
  * DashboardPanel — the SOC-style overview screen (Dashboard tab).
@@ -85,10 +82,6 @@ public class DashboardPanel extends VBox {
 	private static final String COLOR_HIGH     = Theme.SEVERITY_HIGH;
 	private static final String COLOR_MEDIUM   = Theme.SEVERITY_MEDIUM;
 	private static final String COLOR_LOW      = Theme.SEVERITY_LOW;   // now blue, not green — see Theme.java doc
-	private static final String COLOR_OK       = Theme.STATUS_OK;
-	private static final String COLOR_WARN     = Theme.STATUS_WARN;
-	private static final String COLOR_ERROR    = Theme.STATUS_ERROR;
-	private static final String COLOR_UNKNOWN  = Theme.STATUS_UNKNOWN;
 
     private static final DateTimeFormatter TIME_FMT =
             DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());

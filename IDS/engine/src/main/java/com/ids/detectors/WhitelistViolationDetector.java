@@ -69,7 +69,7 @@ public class WhitelistViolationDetector implements Detector {
         // Only alert on internal IPs we don't recognise.
         // We do NOT alert on external IPs being unknown — the entire
         // internet is "unknown" and that's expected.
-        if (isInternal && !trusted && !trustedNet
+        if (isInternal && !trusted && !trustedNet && !approvedOrg
                 && shouldAlert("IP:" + srcIP, now, DEVICE_COOLDOWN_MS)) {
             alertManager.raise(new ThreatEvent(
                 ThreatType.UNKNOWN_IP, srcIP, srcMac,
@@ -118,6 +118,7 @@ public class WhitelistViolationDetector implements Detector {
                 && !isInternal   // but NOT from your subnet
                 && !trusted
                 && !trustedNet
+                && !approvedOrg
                 && shouldAlert("ROGUE:" + srcIP, now)) {
             alertManager.raise(new ThreatEvent(
                 ThreatType.OUTSIDE_SUBNET, srcIP, srcMac,

@@ -2,7 +2,6 @@ package com.ids.controller;
 
 import com.ids.entity.OrgWhitelistEntry;
 import com.ids.model.Alert;
-import com.ids.model.AlertSummary;
 import com.ids.service.AlertService;
 import com.ids.service.OrgWhitelistService;
 
@@ -20,7 +19,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.List;
-import com.ids.dto.AlertSummaryDTO;
 import com.ids.dto.IpProfileDTO;
 
 @RestController
