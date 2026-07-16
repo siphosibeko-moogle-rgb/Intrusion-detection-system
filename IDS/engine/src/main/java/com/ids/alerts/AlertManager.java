@@ -35,7 +35,7 @@ public class AlertManager implements Runnable, AlertSink {
     private BufferedWriter logWriter;
 
     // Per-engine ingest key, issued once when an admin approves the request
-    // (user requests on /engines, admin approves on /admin/agents). The old
+    // (user requests on /engines, admin approves on /admin/approvals). The old
     // shared IDS_ENGINE_APIKEY secret is no longer accepted by the backend,
     // and there is deliberately no fallback: an unset key disables ingest
     // loudly instead of sending a value that would 401 on every alert.
@@ -65,7 +65,7 @@ public class AlertManager implements Runnable, AlertSink {
         if (engineApiKey == null || engineApiKey.isBlank()) {
             System.err.println("[AlertManager] IDS_ENGINE_KEY is not set — backend ingest DISABLED. "
                     + "Alerts will be logged locally only. Request an engine key on the /engines page, "
-                    + "have an admin approve it on /admin/agents, then set IDS_ENGINE_KEY to the issued key.");
+                    + "have an admin approve it on /admin/approvals, then set IDS_ENGINE_KEY to the issued key.");
         }
 
         initLog();
@@ -197,7 +197,7 @@ public class AlertManager implements Runnable, AlertSink {
                             System.err.println("[AlertManager] Backend rejected engine key (HTTP "
                                     + res.code() + ") — the key is unknown, PENDING, or REVOKED. "
                                     + "Alerts are NOT being stored. Have an admin approve the key on "
-                                    + "/admin/agents and set IDS_ENGINE_KEY to the issued value.");
+                                    + "/admin/approvals and set IDS_ENGINE_KEY to the issued value.");
                         }
                     } else if (!res.isSuccessful()) {
                         System.err.println("[AlertManager] Backend error: " + res.code());
