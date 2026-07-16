@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDS — Sign in</title>
+<style>
+:root{--bg:#0a0e1a;--panel:#111827;--border:#1e2d45;--accent:#00d4ff;--red:#ef4444;--green:#22c55e;--text:#e2e8f0;--muted:#64748b;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;min-height:100vh;display:flex;align-items:center;justify-content:center;}
+.box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:48px 40px;width:380px;}
+h1{font-size:24px;letter-spacing:6px;color:var(--accent);text-align:center;}
+.sub{color:var(--muted);font-size:12px;text-align:center;margin:6px 0 28px;letter-spacing:2px;}
+label{display:block;font-size:11px;letter-spacing:2px;color:var(--muted);margin-bottom:6px;}
+input{width:100%;padding:12px 14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:14px;margin-bottom:18px;outline:none;}
+input:focus{border-color:var(--accent);}
+button{width:100%;padding:13px;background:var(--accent);border:none;border-radius:6px;color:#000;font-weight:bold;font-family:inherit;font-size:14px;letter-spacing:2px;cursor:pointer;}
+.err{color:var(--red);font-size:12px;margin-bottom:14px;text-align:center;}
+.ok{color:var(--green);font-size:12px;margin-bottom:14px;text-align:center;}
+.alt{color:var(--muted);font-size:12px;text-align:center;margin-top:18px;}
+a{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>IDS</h1>
+  <p class="sub">SIGN IN</p>
+  <p class="err" th:if="${param.error}">Invalid email or password.</p>
+  <p class="ok" th:if="${param.registered}">Account created — sign in below.</p>
+  <p class="ok" th:if="${param.logout}">You have been signed out.</p>
+  <form th:action="@{/login}" method="post">
+    <label for="username">EMAIL</label>
+    <input id="username" name="username" type="email" autocomplete="username" required autofocus>
+    <label for="password">PASSWORD</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">SIGN IN</button>
+  </form>
+  <p class="alt">No account? <a th:href="@{/register}">Register</a></p>
+</div>
+</body>
+</html>

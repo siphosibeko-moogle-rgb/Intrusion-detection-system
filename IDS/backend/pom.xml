@@ -24,6 +24,14 @@
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
 
+    <!-- Thymeleaf — server-rendered pages for the (minimal) web UI:
+         register/login + engine-key request/approval. Moved here from the
+         deleted `web` module. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+
     <!-- Spring Data JPA -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

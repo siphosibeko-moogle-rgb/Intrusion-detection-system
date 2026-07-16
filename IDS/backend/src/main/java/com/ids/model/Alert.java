@@ -1,19 +1,22 @@
 package com.ids.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
 @Table(name = "alerts",
        indexes = {
-           @Index(name = "idx_alert_source_ip",   
+           @Index(name = "idx_alert_source_ip",
         		   	columnList = "sourceIp"),
            @Index(name = "idx_alert_severity",
            			columnList = "severity"),
-           @Index(name = "idx_alert_timestamp",   
+           @Index(name = "idx_alert_timestamp",
            			columnList = "timestamp"),
-           @Index(name = "idx_alert_threat_type", 
-           			columnList = "threatType")
+           @Index(name = "idx_alert_threat_type",
+           			columnList = "threatType"),
+           @Index(name = "idx_alert_engine_key",
+           			columnList = "engine_key_id")
        })
 public class Alert {
 
@@ -62,6 +65,17 @@ public class Alert {
 
     private String verifiedBy;
     private Instant verifiedAt;
+
+    // ── Sensor attribution ───────────────────────────────────────────────
+    // Which engine key ingested this alert. Set server-side from the
+    // authenticated X-Engine-Key — never from the request body. Nullable:
+    // rows from before this column existed have no source and are not
+    // backfilled. @JsonIgnore keeps the REST/WS JSON shape unchanged for
+    // the desktop client.
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "engine_key_id")
+    private EngineKey engineKey;
 
     @PrePersist
     public void prePersist() {
@@ -168,4 +182,8 @@ public class Alert {
     public void setVerifiedBy(String v)            { verifiedBy = v; }
     public Instant getVerifiedAt()                 { return verifiedAt; }
     public void setVerifiedAt(Instant v)           { verifiedAt = v; }
+
+    @JsonIgnore
+    public EngineKey getEngineKey()                { return engineKey; }
+    public void setEngineKey(EngineKey v)          { engineKey = v; }
 }

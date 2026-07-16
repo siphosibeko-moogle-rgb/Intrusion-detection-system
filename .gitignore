@@ -26,3 +26,6 @@ Thumbs.db
 application-prod.properties
 application-local.properties
 *.env
+
+# Claude Code local session data
+.claude/

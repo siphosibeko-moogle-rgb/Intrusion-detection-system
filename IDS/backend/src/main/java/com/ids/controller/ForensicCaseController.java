@@ -3,11 +3,11 @@ package com.ids.controller;
 import com.ids.entity.CaseNote;
 import com.ids.model.ForensicCase;
 import com.ids.model.PacketLog;
+import com.ids.service.EngineKeyService;
 import com.ids.service.ForensicCaseService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.beans.factory.annotation.Value;
 
 import java.util.Map;
 
@@ -25,13 +25,13 @@ import java.util.Map;
 @RequestMapping("/api/forensics")
 public class ForensicCaseController {
 
-    @Value("${ids.engine.apikey}")
-    private String engineApiKey;
-
     private final ForensicCaseService service;
+    private final EngineKeyService    engineKeyService;
 
-    public ForensicCaseController(ForensicCaseService service) {
-        this.service = service;
+    public ForensicCaseController(ForensicCaseService service,
+                                  EngineKeyService engineKeyService) {
+        this.service          = service;
+        this.engineKeyService = engineKeyService;
     }
 
     // ── CASES ───────────────────────────────────────
@@ -215,8 +215,8 @@ public class ForensicCaseController {
             @RequestHeader(value = "X-Engine-Key", required = false) String key,
             @RequestBody PacketLog log) {
 
-        if (key == null || !key.equals(engineApiKey)) {
-            return ResponseEntity.status(403)
+        if (!engineKeyService.isActiveKey(key)) {
+            return ResponseEntity.status(401)
                     .body(Map.of("error", "Invalid engine key"));
         }
 

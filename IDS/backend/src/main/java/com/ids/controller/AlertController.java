@@ -3,9 +3,9 @@ package com.ids.controller;
 import com.ids.entity.OrgWhitelistEntry;
 import com.ids.model.Alert;
 import com.ids.service.AlertService;
+import com.ids.service.EngineKeyService;
 import com.ids.service.OrgWhitelistService;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -25,38 +25,43 @@ import com.ids.dto.IpProfileDTO;
 @RequestMapping("/api/alerts")
 public class AlertController {
 
-    @Value("${ids.engine.apikey}")
-    private String engineApiKey;
-
     private final AlertService            alertService;
     private final AlertRepository         alertRepository;
     private final AlertSummaryRepository  summaryRepository;
     private final SimpMessagingTemplate   ws;
     private final OrgWhitelistService     orgWhitelistService;
+    private final EngineKeyService        engineKeyService;
 
     public AlertController(AlertService alertService,
                            AlertRepository alertRepository,
                            AlertSummaryRepository summaryRepository,
                            SimpMessagingTemplate ws,
-                           OrgWhitelistService orgWhitelistService) {
+                           OrgWhitelistService orgWhitelistService,
+                           EngineKeyService engineKeyService) {
         this.alertService        = alertService;
         this.alertRepository     = alertRepository;
         this.summaryRepository   = summaryRepository;
         this.ws                  = ws;
         this.orgWhitelistService = orgWhitelistService;
+        this.engineKeyService    = engineKeyService;
     }
 
     /**
      * Engine posts alerts here — validated by X-Engine-Key header.
-     * No JWT required — uses a shared API key instead.
+     * No JWT required — the key is hashed and looked up in engine_keys;
+     * only status=ACTIVE passes. Never log the raw key.
      */
     @PostMapping("/ingest")
-    public ResponseEntity<?> ingest(@RequestHeader("X-Engine-Key") String key,
+    public ResponseEntity<?> ingest(@RequestHeader(value = "X-Engine-Key", required = false) String key,
                                     @RequestBody Map<String, Object> body) {
-        if (!engineApiKey.equals(key))
-            return ResponseEntity.status(403).body(Map.of("error", "Invalid engine key"));
+        com.ids.model.EngineKey engineKey = engineKeyService.authenticate(key).orElse(null);
+        if (engineKey == null)
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid engine key"));
 
         Alert a = new Alert();
+        // Sensor attribution comes from the authenticated key only — the
+        // body is never consulted, so a client cannot claim another source.
+        a.setEngineKey(engineKey);
         a.setThreatType ((String) body.get("threatType"));
         a.setSourceIp   ((String) body.get("sourceIp"));
         a.setSourceMac  ((String) body.get("sourceMac"));

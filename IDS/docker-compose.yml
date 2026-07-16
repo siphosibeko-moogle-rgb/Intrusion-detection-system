@@ -37,7 +37,11 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
       IDS_JWT_SECRET: ${IDS_JWT_SECRET}
       IDS_JWT_EXPIRATION: ${IDS_JWT_EXPIRATION:-86400000}
-      IDS_ENGINE_APIKEY: ${IDS_ENGINE_APIKEY}
+      # Engine keys are issued per-engine via the web UI now — the backend no
+      # longer reads IDS_ENGINE_APIKEY. These two bootstrap the first ADMIN
+      # (no-op once an admin exists; unset them after first login).
+      IDS_ADMIN_USERNAME: ${IDS_ADMIN_USERNAME:-}
+      IDS_ADMIN_PASSWORD: ${IDS_ADMIN_PASSWORD:-}
     healthcheck:
       test: ["CMD-SHELL", "timeout 3 bash -c 'cat < /dev/null > /dev/tcp/localhost/8080' && exit 0 || exit 1"]
       interval: 10s

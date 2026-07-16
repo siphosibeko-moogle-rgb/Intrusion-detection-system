@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDS — Admin Approvals</title>
+<style>
+:root{--bg:#0a0e1a;--panel:#111827;--border:#1e2d45;--accent:#00d4ff;--red:#ef4444;--yellow:#eab308;--green:#22c55e;--text:#e2e8f0;--muted:#64748b;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;min-height:100vh;}
+header{background:var(--panel);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;}
+.logo{color:var(--accent);font-size:18px;letter-spacing:4px;font-weight:bold;}
+.hright{display:flex;align-items:center;gap:16px;color:var(--muted);font-size:12px;}
+.hright a{color:var(--accent);font-size:12px;}
+.logout{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;}
+main{max-width:1000px;margin:32px auto;padding:0 20px;}
+h2{font-size:15px;letter-spacing:3px;color:var(--accent);margin-bottom:14px;}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:22px;margin-bottom:28px;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th{color:var(--muted);font-size:11px;letter-spacing:2px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);}
+td{padding:10px;border-bottom:1px solid var(--border);}
+button{font-family:inherit;font-size:11px;letter-spacing:1px;padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-weight:bold;}
+.approve{background:var(--green);color:#000;}
+.reject,.revoke{background:transparent;color:var(--red);border:1px solid var(--red);}
+.keybox{background:rgba(34,197,94,.08);border:1px solid var(--green);border-radius:10px;padding:22px;margin-bottom:28px;}
+.keybox h2{color:var(--green);}
+.keybox code{display:block;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px;font-size:15px;color:var(--accent);margin:12px 0;word-break:break-all;user-select:all;}
+.keybox p{font-size:12px;color:var(--yellow);}
+.err{color:var(--red);font-size:12px;margin-bottom:16px;}
+.empty{color:var(--muted);font-size:13px;padding:8px 0;}
+.actions{display:flex;gap:8px;}
+code{color:var(--accent);}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">IDS</div>
+  <div class="hright">
+    <a th:href="@{/engines}">MY ENGINES</a>
+    <a th:href="@{/admin/agents}">AGENT STATUS</a>
+    <form th:action="@{/logout}" method="post" style="display:inline">
+      <button class="logout" type="submit">SIGN OUT</button>
+    </form>
+  </div>
+</header>
+<main>
+  <p class="err" th:if="${error}" th:text="${error}"></p>
+
+  <div class="keybox" th:if="${issuedKey}">
+    <h2>KEY ISSUED</h2>
+    <code th:text="${issuedKey}"></code>
+    <p>⚠ Copy this key now and hand it to the engine operator.
+       You will NOT see it again — only a hash is stored.</p>
+  </div>
+
+  <div class="panel">
+    <h2>PENDING REQUESTS</h2>
+    <p class="empty" th:if="${#lists.isEmpty(pending)}">No pending key requests.</p>
+    <table th:unless="${#lists.isEmpty(pending)}">
+      <thead>
+        <tr><th>REQUESTED BY</th><th>ENGINE NAME</th><th>REQUESTED</th><th>ACTIONS</th></tr>
+      </thead>
+      <tbody>
+        <tr th:each="k : ${pending}">
+          <td th:text="${k.owner.username}"></td>
+          <td th:text="${k.name}"></td>
+          <td th:text="${#temporals.format(k.createdAt, 'yyyy-MM-dd HH:mm')}"></td>
+          <td>
+            <div class="actions">
+              <form th:action="@{/admin/approvals/{id}/approve(id=${k.id})}" method="post">
+                <button class="approve" type="submit">APPROVE</button>
+              </form>
+              <form th:action="@{/admin/approvals/{id}/reject(id=${k.id})}" method="post">
+                <button class="reject" type="submit">REJECT</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>ACTIVE KEYS</h2>
+    <p class="empty" th:if="${#lists.isEmpty(active)}">No active keys.</p>
+    <table th:unless="${#lists.isEmpty(active)}">
+      <thead>
+        <tr><th>OWNER</th><th>ENGINE NAME</th><th>KEY PREFIX</th><th>APPROVED</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr th:each="k : ${active}">
+          <td th:text="${k.owner.username}"></td>
+          <td th:text="${k.name}"></td>
+          <td><code th:text="${k.keyPrefix} + '…'"></code></td>
+          <td th:text="${#temporals.format(k.approvedAt, 'yyyy-MM-dd HH:mm')}"></td>
+          <td>
+            <form th:action="@{/admin/approvals/{id}/revoke(id=${k.id})}" method="post">
+              <button class="revoke" type="submit">REVOKE</button>
+            </form>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</main>
+</body>
+</html>

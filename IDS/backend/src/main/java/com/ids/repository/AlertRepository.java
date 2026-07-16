@@ -29,6 +29,16 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
 
     long countBySeverity(String severity);
 
+    // Per-sensor alert counts for the status pages — one grouped query
+    // regardless of key count (never a count() loop per key). Grouping on
+    // the FK itself needs no join to engine_keys.
+    @Query("SELECT a.engineKey.id, COUNT(a) FROM Alert a WHERE a.engineKey IS NOT NULL GROUP BY a.engineKey.id")
+    List<Object[]> countPerEngineKey();
+
+    // Same, scoped to one owner's keys for /engines.
+    @Query("SELECT a.engineKey.id, COUNT(a) FROM Alert a WHERE a.engineKey.owner.id = :ownerId GROUP BY a.engineKey.id")
+    List<Object[]> countPerEngineKeyForOwner(@Param("ownerId") Long ownerId);
+
     @Query("""
         SELECT a.threatType, COUNT(a)
         FROM Alert a

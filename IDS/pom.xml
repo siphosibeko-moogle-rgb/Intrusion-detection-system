@@ -29,7 +29,6 @@
     <module>desktop</module>
     <module>observer</module>
     <module>observer_backend</module>
-    <module>web</module>
   </modules>
 
   <build>
