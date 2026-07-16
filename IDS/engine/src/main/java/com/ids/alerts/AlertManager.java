@@ -34,11 +34,16 @@ public class AlertManager implements Runnable, AlertSink {
     // One open writer, flushed per alert, closed only on stop().
     private BufferedWriter logWriter;
 
-    // FIX — Engine API key read from environment, not hardcoded in source.
-    // The old value "ids-engine-secret-key-2024" was extractable from the JAR
-    // with: strings engine-1.0.0.jar | grep ids-engine
-    private final String engineApiKey = System.getenv()
-            .getOrDefault("IDS_ENGINE_APIKEY", "ids-engine-dev-key-replace-in-prod");
+    // Per-engine ingest key, issued once when an admin approves the request
+    // (user requests on /engines, admin approves on /admin/agents). The old
+    // shared IDS_ENGINE_APIKEY secret is no longer accepted by the backend,
+    // and there is deliberately no fallback: an unset key disables ingest
+    // loudly instead of sending a value that would 401 on every alert.
+    private final String engineApiKey = System.getenv("IDS_ENGINE_KEY");
+
+    // Auth failures repeat once per alert; log them at most once a minute.
+    private static final long AUTH_ERROR_LOG_INTERVAL_MS = 60_000L;
+    private volatile long lastAuthErrorLog = 0L;
 
     private final ConcurrentHashMap<String, Long> cooldowns = new ConcurrentHashMap<>();
     private static final long COOLDOWN_MS = 3_000L;
@@ -56,6 +61,12 @@ public class AlertManager implements Runnable, AlertSink {
             .connectTimeout(3, TimeUnit.SECONDS)
             .callTimeout(5, TimeUnit.SECONDS)
             .build();
+
+        if (engineApiKey == null || engineApiKey.isBlank()) {
+            System.err.println("[AlertManager] IDS_ENGINE_KEY is not set — backend ingest DISABLED. "
+                    + "Alerts will be logged locally only. Request an engine key on the /engines page, "
+                    + "have an admin approve it on /admin/agents, then set IDS_ENGINE_KEY to the issued key.");
+        }
 
         initLog();
     }
@@ -157,6 +168,7 @@ public class AlertManager implements Runnable, AlertSink {
 
     private void postToBackend(ThreatEvent e) {
         if (backendUrl == null || backendUrl.isBlank()) return;
+        if (engineApiKey == null || engineApiKey.isBlank()) return;
 
         try {
             String json = mapper.writeValueAsString(e.toMap());
@@ -166,7 +178,6 @@ public class AlertManager implements Runnable, AlertSink {
             );
             Request req = new Request.Builder()
                     .url(backendUrl + "/api/alerts/ingest")
-                    // FIX — key comes from env var, not hardcoded string
                     .addHeader("X-Engine-Key", engineApiKey)
                     .post(body)
                     .build();
@@ -179,7 +190,16 @@ public class AlertManager implements Runnable, AlertSink {
 
                 @Override
                 public void onResponse(Call call, Response res) {
-                    if (!res.isSuccessful()) {
+                    if (res.code() == 401 || res.code() == 403) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastAuthErrorLog > AUTH_ERROR_LOG_INTERVAL_MS) {
+                            lastAuthErrorLog = now;
+                            System.err.println("[AlertManager] Backend rejected engine key (HTTP "
+                                    + res.code() + ") — the key is unknown, PENDING, or REVOKED. "
+                                    + "Alerts are NOT being stored. Have an admin approve the key on "
+                                    + "/admin/agents and set IDS_ENGINE_KEY to the issued value.");
+                        }
+                    } else if (!res.isSuccessful()) {
                         System.err.println("[AlertManager] Backend error: " + res.code());
                     }
                     res.close();
