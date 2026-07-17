@@ -51,7 +51,7 @@
                                 <TableColumn fx:id="colRequestType" text="Request"/>
                                 <TableColumn fx:id="colPackets"     text="Packets"/>
                                 <TableColumn fx:id="colDetails"     text="Details"/>
-                                <TableColumn fx:id="colOccurrences" text="Occurrences" prefWidth="90"/>
+                                <TableColumn fx:id="colOccurrences" text="Occurrences"/>
                             </columns>
                         </TableView>
                     </VBox>
@@ -110,20 +110,15 @@
                                            VBox.vgrow="ALWAYS">
                                     <columns>
                                         <TableColumn fx:id="colTnCidr"
-                                                     text="CIDR"
-                                                     prefWidth="160"/>
+                                                     text="CIDR"/>
                                         <TableColumn fx:id="colTnProvider"
-                                                     text="Provider"
-                                                     prefWidth="120"/>
+                                                     text="Provider"/>
                                         <TableColumn fx:id="colTnCategory"
-                                                     text="Category"
-                                                     prefWidth="100"/>
+                                                     text="Category"/>
                                         <TableColumn fx:id="colTnEnabled"
-                                                     text="Enabled"
-                                                     prefWidth="80"/>
+                                                     text="Enabled"/>
                                         <TableColumn fx:id="colTnSuppress"
-                                                     text="Suppress Beaconing"
-                                                     prefWidth="140"/>
+                                                     text="Suppress Beaconing"/>
                                     </columns>
                                 </TableView>
                                 <HBox spacing="8" alignment="CENTER_LEFT">
@@ -166,15 +161,13 @@
                                            VBox.vgrow="ALWAYS">
                                     <columns>
                                         <TableColumn fx:id="colFlagSel"
-                                                     text="✓"
-                                                     prefWidth="30"/>
+                                                     text="✓"/>
                                         <TableColumn fx:id="colFlagIp"
                                                      text="IP"/>
                                         <TableColumn fx:id="colFlagMac"
                                                      text="MAC"/>
                                         <TableColumn fx:id="colFlagOrg"
-                                                     text="Organization"
-                                                     prefWidth="150"/>
+                                                     text="Organization"/>
                                         <TableColumn fx:id="colFlagThreat"
                                                      text="Threats"/>
                                         <TableColumn fx:id="colFlagSeverity"

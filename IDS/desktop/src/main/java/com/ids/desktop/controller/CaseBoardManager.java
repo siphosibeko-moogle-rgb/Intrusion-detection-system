@@ -97,6 +97,19 @@ public class CaseBoardManager {
             }
         });
 
+        // Title is the free-text column (hover shows the full value).
+        TableLayout.constrain(table);
+        TableLayout.bounded(colNum,         90, 110, 140);
+        TableLayout.flex   (colTitle,      140, 240);
+        TableLayout.bounded(colStatus,      90, 110, 140);
+        TableLayout.bounded(colSeverity,    70,  85, 110);
+        TableLayout.bounded(colSuspectIp,  100, 120, 150);
+        TableLayout.bounded(colSuspectMac, 120, 135, 155);
+        TableLayout.bounded(colThreatType, 110, 150, 240);
+        TableLayout.bounded(colAssignedTo,  90, 110, 150);
+        TableLayout.bounded(colOpenedAt,   110, 140, 180);
+        TableLayout.tooltipCells(colTitle);
+
         filteredCases = new FilteredList<>(caseEntries, p -> true);
         table.setItems(filteredCases);
         table.setPlaceholder(new Label("No forensic cases opened yet."));

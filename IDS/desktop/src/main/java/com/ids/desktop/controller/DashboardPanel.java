@@ -283,27 +283,31 @@ public class DashboardPanel extends VBox {
 
         TableColumn<DashCaseRow, String> colNum = new TableColumn<>("Case #");
         colNum.setCellValueFactory(new PropertyValueFactory<>("caseNumber"));
-        colNum.setPrefWidth(110);
 
         TableColumn<DashCaseRow, String> colTitle = new TableColumn<>("Title");
         colTitle.setCellValueFactory(new PropertyValueFactory<>("title"));
-        colTitle.setPrefWidth(220);
 
         TableColumn<DashCaseRow, String> colPriority = new TableColumn<>("Priority");
         colPriority.setCellValueFactory(new PropertyValueFactory<>("priority"));
-        colPriority.setPrefWidth(90);
 
         TableColumn<DashCaseRow, String> colStatus = new TableColumn<>("Status");
         colStatus.setCellValueFactory(new PropertyValueFactory<>("status"));
-        colStatus.setPrefWidth(110);
 
         TableColumn<DashCaseRow, String> colOpened = new TableColumn<>("Opened");
         colOpened.setCellValueFactory(new PropertyValueFactory<>("openedAt"));
-        colOpened.setPrefWidth(140);
 
         TableColumn<DashCaseRow, String> colAssigned = new TableColumn<>("Assigned To");
         colAssigned.setCellValueFactory(new PropertyValueFactory<>("assignedTo"));
-        colAssigned.setPrefWidth(110);
+
+        // Title is the free-text column (hover shows the full value).
+        TableLayout.constrain(tv);
+        TableLayout.bounded(colNum,       90, 110, 140);
+        TableLayout.flex   (colTitle,    140, 220);
+        TableLayout.bounded(colPriority,  70,  90, 110);
+        TableLayout.bounded(colStatus,    90, 110, 140);
+        TableLayout.bounded(colOpened,   110, 140, 180);
+        TableLayout.bounded(colAssigned,  90, 110, 150);
+        TableLayout.tooltipCells(colTitle);
 
         tv.getColumns().addAll(List.of(colNum, colTitle, colPriority, colStatus, colOpened, colAssigned));
         return tv;
@@ -481,11 +485,9 @@ public class DashboardPanel extends VBox {
 
         TableColumn<ThreatActorRow, Number> colRank = new TableColumn<>("#");
         colRank.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getRank()));
-        colRank.setPrefWidth(30);
 
         TableColumn<ThreatActorRow, String> colIp = new TableColumn<>("IP");
         colIp.setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colIp.setPrefWidth(110);
         colIp.setCellFactory(col -> new TableCell<>() {
             @Override protected void updateItem(String ip, boolean empty) {
                 super.updateItem(ip, empty);
@@ -499,21 +501,26 @@ public class DashboardPanel extends VBox {
         TableColumn<ThreatActorRow, ThreatActorRow> colScore = new TableColumn<>("Threat Score");
         colScore.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue()));
         colScore.setCellFactory(c -> threatScoreCell());
-        colScore.setPrefWidth(150);
 
         TableColumn<ThreatActorRow, Number> colAlerts = new TableColumn<>("Alerts");
         colAlerts.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getTotalAlerts()));
-        colAlerts.setPrefWidth(70);
 
         TableColumn<ThreatActorRow, String> colTopThreat = new TableColumn<>("Top Threat");
         colTopThreat.setCellValueFactory(new PropertyValueFactory<>("topThreatType"));
-        colTopThreat.setPrefWidth(140);
 
         TableColumn<ThreatActorRow, String> colLastSeen = new TableColumn<>("Last Seen");
         colLastSeen.setCellValueFactory(new PropertyValueFactory<>("lastSeen"));
-        colLastSeen.setPrefWidth(120);
-        
-        
+
+        // Top Threat is the free-text column; colIp keeps its hyperlink cell
+        // factory and colScore its bar renderer — width hints only for those.
+        TableLayout.constrain(tv);
+        TableLayout.bounded(colRank,       30,  34,  44);
+        TableLayout.bounded(colIp,        100, 120, 150);
+        TableLayout.bounded(colScore,     120, 150, 180);
+        TableLayout.bounded(colAlerts,     55,  70,  95);
+        TableLayout.flex   (colTopThreat, 120, 160);
+        TableLayout.bounded(colLastSeen,  100, 120, 160);
+        TableLayout.tooltipCells(colTopThreat);
 
         tv.getColumns().addAll(List.of(colRank, colIp, colScore, colAlerts, colTopThreat, colLastSeen));
         return tv;

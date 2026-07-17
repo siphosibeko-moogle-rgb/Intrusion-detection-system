@@ -126,6 +126,18 @@ public class AlertGroupsPanel extends VBox {
 
         colSev.setCellFactory(c -> severityCell());
 
+        // Threat Types is the free-text column (hover shows the full list).
+        TableLayout.constrain(tv);
+        TableLayout.bounded(colIp,     100, 130, 150);
+        TableLayout.bounded(colMac,    120, 130, 155);
+        TableLayout.bounded(colCount,   55,  70,  95);
+        TableLayout.bounded(colSev,     70,  90, 110);
+        TableLayout.flex   (colTypes,  150, 220);
+        TableLayout.bounded(colFirst,  110, 140, 170);
+        TableLayout.bounded(colLast,   110, 140, 170);
+        TableLayout.bounded(colAction, 130, 150, 175);
+        TableLayout.tooltipCells(colTypes);
+
         tv.getColumns().addAll(colIp, colMac, colCount, colSev, colTypes, colFirst, colLast, colAction);
         return tv;
     }

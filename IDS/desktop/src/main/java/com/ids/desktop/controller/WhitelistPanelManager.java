@@ -94,6 +94,14 @@ public class WhitelistPanelManager {
         colLabel  .setCellValueFactory(new PropertyValueFactory<>("label"));
         colAddedAt.setCellValueFactory(new PropertyValueFactory<>("addedAt"));
         colIp.setCellFactory(col -> cyanCell());
+
+        // Label is the free-text column; the rest have bounded content.
+        TableLayout.constrain(table);
+        TableLayout.bounded(colIp,      100, 120, 150);
+        TableLayout.bounded(colMac,     120, 135, 155);
+        TableLayout.flex   (colLabel,   120, 220);
+        TableLayout.bounded(colAddedAt, 110, 140, 180);
+
         filteredMyWl = new FilteredList<>(myWlEntries, p -> true);
         table.setItems(filteredMyWl);
         table.setPlaceholder(new Label("No trusted devices."));
@@ -125,6 +133,15 @@ public class WhitelistPanelManager {
         // Amber "Yes": suppressing beaconing for a range is a deliberate
         // security trade-off, so it should stand out in the table.
         colSuppress.setCellFactory(col -> yesNoCell(true));
+
+        // Provider is the free-text column; a CIDR is at most 18 chars.
+        TableLayout.constrain(table);
+        TableLayout.bounded(colCidr,     120, 150, 180);
+        TableLayout.flex   (colProvider, 110, 180);
+        TableLayout.bounded(colCategory,  90, 120, 160);
+        TableLayout.bounded(colEnabled,   70,  80, 100);
+        TableLayout.bounded(colSuppress, 100, 140, 170);
+
         filteredTrustedNets = new FilteredList<>(trustedNetworks, p -> true);
         table.setItems(filteredTrustedNets);
         table.setPlaceholder(new Label("No trusted networks."));
@@ -159,6 +176,20 @@ public class WhitelistPanelManager {
         colThreat  .setCellFactory(col -> amberCell());
         colSeverity.setCellFactory(col -> severityCell());
         colHits    .setCellFactory(col -> hitCountCell());
+
+        // Organization is the free-text column here; it already has its own
+        // cell factory (organizationCell), so it gets width hints only.
+        TableLayout.constrain(table);
+        TableLayout.bounded(colSel,       34,  36,  42);
+        TableLayout.bounded(colIp,       100, 120, 150);
+        TableLayout.bounded(colMac,      120, 135, 155);
+        TableLayout.flex   (colOrg,      120, 180);
+        TableLayout.bounded(colThreat,   110, 150, 240);
+        TableLayout.bounded(colSeverity,  70,  85, 110);
+        TableLayout.bounded(colProto,     60,  75, 100);
+        TableLayout.bounded(colHits,      55,  65,  95);
+        TableLayout.bounded(colSeen,     100, 120, 160);
+
         table.setItems(flaggedIps);
         table.setPlaceholder(new Label("No flagged IPs."));
     }

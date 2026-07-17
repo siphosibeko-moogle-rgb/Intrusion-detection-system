@@ -110,6 +110,23 @@ public class AlertTableManager {
             }
         });
 
+        // Details carries free text (hover shows the full value); the rest are bounded.
+        // colSourceIp gets its hyperlink cell factory later in
+        // MainController.wireIpColumnClick() — width hints only here.
+        TableLayout.constrain(alertTable);
+        TableLayout.bounded(colTimestamp,    70,  85, 110);
+        TableLayout.bounded(colSeverity,     70,  85, 110);
+        TableLayout.bounded(colThreatType,  110, 150, 260);
+        TableLayout.bounded(colSourceIp,    100, 120, 150);
+        TableLayout.bounded(colSourceMac,   120, 135, 155);
+        TableLayout.bounded(colDestIp,      100, 120, 150);
+        TableLayout.bounded(colProtocol,     60,  75, 100);
+        TableLayout.bounded(colRequestType,  80, 110, 170);
+        TableLayout.bounded(colPackets,      60,  70, 100);
+        TableLayout.flex   (colDetails,     160, 300);
+        TableLayout.bounded(colOccurrences,  80,  95, 120);
+        TableLayout.tooltipCells(colDetails);
+
         filteredAlerts = new FilteredList<>(allAlerts, p -> true);
         alertTable.setItems(filteredAlerts);
         alertTable.setPlaceholder(new Label("No alerts yet."));

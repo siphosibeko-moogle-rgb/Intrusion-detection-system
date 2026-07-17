@@ -316,6 +316,17 @@ public class CaseDetailPanel extends VBox {
 
         colSev.setCellFactory(c -> severityCell());
 
+        // Details is the free-text column (hover shows the full value).
+        TableLayout.constrain(alertsTable);
+        TableLayout.bounded(colTime,   90, 120, 150);
+        TableLayout.bounded(colSev,    70,  85, 110);
+        TableLayout.bounded(colType,  110, 140, 240);
+        TableLayout.bounded(colSrc,   100, 120, 150);
+        TableLayout.bounded(colDst,   100, 120, 150);
+        TableLayout.bounded(colProto,  60,  75, 100);
+        TableLayout.flex   (colDet,   160, 220);
+        TableLayout.tooltipCells(colDet);
+
         alertsTable.getColumns().addAll(colTime, colSev, colType, colSrc, colDst, colProto, colDet);
         alertsTable.setPlaceholder(new Label("No alerts linked to this case."));
         VBox.setVgrow(alertsTable, Priority.ALWAYS);
