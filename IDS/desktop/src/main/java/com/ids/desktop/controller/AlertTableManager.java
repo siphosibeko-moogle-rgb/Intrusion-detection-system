@@ -101,15 +101,6 @@ public class AlertTableManager {
             }
         });
 
-        // Source IP in cyan — visually marks it as the primary key field
-        colSourceIp.setCellFactory(col -> new TableCell<>() {
-            @Override protected void updateItem(String s, boolean empty) {
-                super.updateItem(s, empty);
-                setText(empty ? null : s);
-                setStyle(empty ? "" : "-fx-text-fill:#00d4ff; -fx-font-weight:bold;");
-            }
-        });
-
         // Details carries free text (hover shows the full value); the rest are bounded.
         // colSourceIp gets its hyperlink cell factory later in
         // MainController.wireIpColumnClick() — width hints only here.

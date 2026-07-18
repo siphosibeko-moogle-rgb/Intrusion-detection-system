@@ -87,17 +87,32 @@ public class LiveFeedClient extends WebSocketClient {
     @Override
     public void onMessage(String message) {
         try {
-            // Extract the JSON body — it follows the blank line after the STOMP headers
+            // STOMP frame = command line, header lines, blank line, body.
             int bodyStart = message.indexOf("\n\n");
             if (bodyStart == -1) return;
-            String body = message.substring(bodyStart + 2).replace("\0", "").trim();
-            if (body.isEmpty() || !body.startsWith("{")) return;
 
-            // Route bulk-clear to its own callback (if provided)
-            if (message.contains("destination:/topic/alerts-cleared")) {
+            // Route on the destination HEADER, never a substring search of the
+            // whole frame — an alert whose details text happened to contain
+            // "destination:/topic/alerts-cleared" used to trigger a bulk clear.
+            String destination = null;
+            String[] headerLines = message.substring(0, bodyStart).split("\n");
+            for (int i = 1; i < headerLines.length; i++) { // line 0 is the command
+                if (headerLines[i].startsWith("destination:")) {
+                    destination = headerLines[i].substring("destination:".length()).trim();
+                    break;
+                }
+            }
+            // CONNECTED / RECEIPT / ERROR frames carry no destination — ignore.
+            if (destination == null) return;
+
+            // Bulk-clear signal has no meaningful body — route on topic alone.
+            if ("/topic/alerts-cleared".equals(destination)) {
                 if (onCleared != null) Platform.runLater(onCleared);
                 return;
             }
+
+            String body = message.substring(bodyStart + 2).replace("\0", "").trim();
+            if (body.isEmpty() || !body.startsWith("{")) return;
 
             // Everything else — both /topic/alerts and /topic/alerts/deleted —
             // goes to onAlert.  MainController.onAlertReceived() distinguishes:

@@ -1,6 +1,5 @@
 package com.ids.desktop.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.ids.desktop.model.*;
 import com.ids.desktop.service.BackendClient;
 import javafx.application.Platform;
@@ -29,24 +28,6 @@ public class DataLoader {
 
     public DataLoader(BackendClient backend) {
         this.backend = backend;
-    }
-
-    public void loadAlerts(Consumer<List<AlertItem>> onAlerts,
-                           Consumer<JsonNode> onStats,
-                           Consumer<String> onError) {
-        thread("ids-load-alerts", () -> {
-            try {
-                List<AlertItem> items = backend.fetchAlerts();
-                JsonNode stats = backend.fetchStats();
-
-                Platform.runLater(() -> {
-                    onAlerts.accept(items);
-                    onStats.accept(stats);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> onError.accept(e.getMessage()));
-            }
-        });
     }
 
     public void loadWhitelist(WhitelistCallback onLoaded,
@@ -135,18 +116,13 @@ public class DataLoader {
     }
 
     public void loadAlertSummaries(Consumer<List<AlertItem>> onAlerts,
-                                   Consumer<JsonNode> onStats,
                                    Consumer<String> onError) {
 
         thread("ids-load-alert-summaries", () -> {
             try {
                 List<AlertItem> items = backend.fetchAlertSummaries();
-                JsonNode stats = backend.fetchStats();
 
-                Platform.runLater(() -> {
-                    onAlerts.accept(items);
-                    onStats.accept(stats);
-                });
+                Platform.runLater(() -> onAlerts.accept(items));
 
             } catch (Exception e) {
                 Platform.runLater(() -> onError.accept(e.getMessage()));

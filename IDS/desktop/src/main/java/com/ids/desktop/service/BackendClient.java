@@ -172,10 +172,6 @@ public class BackendClient {
         return list;
     }
 
-    public JsonNode fetchStats() throws IOException {
-        return mapper.readTree(get("/api/alerts/stats"));
-    }
-
     /**
      * Deletes a single AlertSummary row by its id.
      * Calls DELETE /api/alerts/summaries/{id}.

@@ -233,7 +233,6 @@ public class MainController implements Initializable {
     private void loadAllData() {
         dataLoader.loadAlertSummaries(
                 this::onAlertsLoaded,
-                this::updateStats,
                 msg -> handleSessionError("Alert load failed", msg));
         whitelistManager.reload();
         caseBoard.reload();
@@ -314,11 +313,7 @@ public class MainController implements Initializable {
             long id = node.path("id").asLong(0);
             if (id > 0) {
                 // Already on WS I/O thread — must dispatch to JavaFX thread for UI
-                Platform.runLater(() -> {
-                    alertManager.removeById(id);
-                    
-                    updateStats(null); // recalculate counters from the now-shorter list
-                });
+                Platform.runLater(() -> alertManager.removeById(id));
                 return;
             }
         }
@@ -360,7 +355,6 @@ public class MainController implements Initializable {
             if (isReady()) {
                 dataLoader.loadAlertSummaries(
                         this::onAlertsLoaded,
-                        this::updateStats,
                         msg -> handleSessionError("Poll failed", msg));
                 // Keep Flagged IPs current: new detections fold into their
                 // row, and async org lookups (backend fills org_whitelist in
@@ -369,15 +363,6 @@ public class MainController implements Initializable {
                 whitelistManager.reloadWhitelists();
             }
         }, 30, 30, TimeUnit.SECONDS);
-    }
-
-    // ── STATS ─────────────────────────────────────────────────────────────────
-
-    private void updateStats(JsonNode stats) {
-        // Severity counts are now shown only on the Dashboard tab's stat cards
-        // (DashboardPanel, driven by /api/dashboard/summary). The header no
-        // longer displays raw counts — this method is kept as a no-op landing
-        // point for the 3 existing call sites rather than touching all three.
     }
 
     // ── FXML ACTIONS ──────────────────────────────────────────────────────────
@@ -470,6 +455,12 @@ public class MainController implements Initializable {
             backend.invalidateSession();
     }
 
+    /**
+     * Walks up from the alert table to the HBox/BorderPane the side-panel
+     * stack should attach to. Returns null when neither exists — the old
+     * fallback cast the scene root to Pane blindly, which would throw
+     * ClassCastException on a non-Pane root (e.g. Group).
+     */
     private javafx.scene.layout.Pane findRootPane() {
         javafx.scene.Node node = alertTable;
         while (node.getParent() != null) {
@@ -477,7 +468,7 @@ public class MainController implements Initializable {
                 return (javafx.scene.layout.Pane) node.getParent();
             node = node.getParent();
         }
-        return (javafx.scene.layout.Pane) node;
+        return null;
     }
 
     private void wireIpColumnClick() {
@@ -541,6 +532,10 @@ public class MainController implements Initializable {
                 HBox.setHgrow(sidePanelStack, Priority.NEVER);
             } else if (root instanceof BorderPane bp) {
                 bp.setRight(sidePanelStack);
+            } else {
+                // No attachable container — side panels would silently never
+                // render, so make the layout assumption failure loud.
+                System.err.println("[Desktop] No HBox/BorderPane ancestor for side panels");
             }
         });
 
