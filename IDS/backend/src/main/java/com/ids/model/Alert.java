@@ -15,6 +15,10 @@ import java.time.Instant;
            			columnList = "timestamp"),
            @Index(name = "idx_alert_threat_type",
            			columnList = "threatType"),
+           // findConversation matches destIp too — without this, its OR
+           // branch falls back to a sequential scan.
+           @Index(name = "idx_alert_dest_ip",
+           			columnList = "destIp"),
            @Index(name = "idx_alert_engine_key",
            			columnList = "engine_key_id")
        })

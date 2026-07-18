@@ -354,12 +354,27 @@ public class ForensicCaseService {
         return String.format("CASE-%d-%03d", year, seq);
     }
     public List<AlertGroupDTO> getAlertGroupsForCaseCreation() {
-        return alertRepo.findAlertGroupsBySourceIp().stream()
-                .map(this::toGroupDto)
+        List<AlertGroupProjection> groups = alertRepo.findAlertGroupsBySourceIp();
+
+        // FIX (perf): existing-case lookup was one query per group. Batch
+        // them: one IN query, keeping the most recent case per IP (rows come
+        // back openedAt-desc, so the first one seen per IP wins).
+        List<String> ips = groups.stream()
+                .map(AlertGroupProjection::getSourceIp)
+                .collect(Collectors.toList());
+        java.util.Map<String, ForensicCase> latestCaseByIp = new java.util.HashMap<>();
+        if (!ips.isEmpty()) {
+            for (ForensicCase c : caseRepo.findBySuspectIpInOrderByOpenedAtDesc(ips)) {
+                latestCaseByIp.putIfAbsent(c.getSuspectIp(), c);
+            }
+        }
+
+        return groups.stream()
+                .map(g -> toGroupDto(g, latestCaseByIp.get(g.getSourceIp())))
                 .collect(Collectors.toList());
     }
 
-    private AlertGroupDTO toGroupDto(AlertGroupProjection g) {
+    private AlertGroupDTO toGroupDto(AlertGroupProjection g, ForensicCase existing) {
         AlertGroupDTO dto = new AlertGroupDTO();
         dto.setSourceIp(g.getSourceIp());
         dto.setSourceMac(g.getSourceMac());
@@ -369,12 +384,10 @@ public class ForensicCaseService {
         dto.setThreatTypes(g.getThreatTypes());
         dto.setSeverity(rankToSeverity(g.getSeverityRank()));
 
-        List<ForensicCase> existing = getBySuspectIp(g.getSourceIp());
-        dto.setHasExistingCase(!existing.isEmpty());
-        if (!existing.isEmpty()) {
-            ForensicCase c = existing.get(0);
-            dto.setExistingCaseId(c.getId());
-            dto.setExistingCaseNumber(c.getCaseNumber());
+        dto.setHasExistingCase(existing != null);
+        if (existing != null) {
+            dto.setExistingCaseId(existing.getId());
+            dto.setExistingCaseNumber(existing.getCaseNumber());
         }
         return dto;
     }

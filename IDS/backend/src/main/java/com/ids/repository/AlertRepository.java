@@ -7,23 +7,25 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 
 public interface AlertRepository extends JpaRepository<Alert, Long> {
 
     List<Alert> findTop100ByOrderByTimestampDesc();
 
-    List<Alert> findBySeverityOrderByTimestampDesc(String severity);
+    // All list queries are capped: raw alerts are unbounded (one row per
+    // event, forever), so an uncapped filter — or sinceMs=0 — would stream
+    // the whole table into one JSON response.
+    List<Alert> findTop500BySeverityOrderByTimestampDesc(String severity);
 
-    List<Alert> findByThreatTypeOrderByTimestampDesc(String threatType);
-
-    List<Alert> findBySourceIpOrderByTimestampDesc(String sourceIp);
+    List<Alert> findTop500ByThreatTypeOrderByTimestampDesc(String threatType);
 
     List<Alert> findBySourceIpOrderByTimestampAsc(String sourceIp);
 
-    List<Alert> findBySourceMacOrderByTimestampDesc(String sourceMac);
+    List<Alert> findTop500BySourceMacOrderByTimestampDesc(String sourceMac);
 
-    List<Alert> findByTimestampAfterOrderByTimestampDesc(Instant since);
+    List<Alert> findTop1000ByTimestampAfterOrderByTimestampDesc(Instant since);
 
     List<Alert> findTop500BySourceIpOrderByTimestampDesc(String sourceIp);
 
@@ -128,16 +130,39 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     List<AlertGroupProjection> findAlertGroupsBySourceIp();
     
     /**
-     * Powers "View Conversation" — every alert recorded between two IPs,
-     * regardless of which one was source vs destination on a given alert,
-     * ordered chronologically so it reads like a timeline of the pair's
-     * interaction.
+     * Powers "View Conversation" — alerts recorded between two IPs,
+     * regardless of which one was source vs destination on a given alert.
+     * Ordered newest-first so a Pageable cap keeps the most RECENT rows
+     * (a chatty pair could have unbounded history); the controller
+     * reverses the page back to chronological order for display.
      */
     @Query("SELECT a FROM Alert a " +
            "WHERE (a.sourceIp = :ip1 AND a.destIp = :ip2) " +
            "   OR (a.sourceIp = :ip2 AND a.destIp = :ip1) " +
-           "ORDER BY a.timestamp ASC")
-    List<Alert> findConversation(@Param("ip1") String ip1, @Param("ip2") String ip2);
+           "ORDER BY a.timestamp DESC")
+    List<Alert> findConversation(@Param("ip1") String ip1, @Param("ip2") String ip2,
+                                 org.springframework.data.domain.Pageable pageable);
+
+    // ── Threat-actors batch aggregates ───────────────────────────────────
+    // One grouped query per statistic for ALL ranked IPs at once — replaces
+    // the old per-IP buildIpProfile() calls (1 + N queries, each loading an
+    // attacker's ENTIRE alert history just to count severities).
+
+    @Query("""
+        SELECT a.sourceIp, a.severity, COUNT(a)
+        FROM Alert a
+        WHERE a.sourceIp IN :ips
+        GROUP BY a.sourceIp, a.severity
+    """)
+    List<Object[]> countSeverityBySourceIps(@Param("ips") Collection<String> ips);
+
+    @Query("""
+        SELECT a.sourceIp, a.threatType, COUNT(a)
+        FROM Alert a
+        WHERE a.sourceIp IN :ips
+        GROUP BY a.sourceIp, a.threatType
+    """)
+    List<Object[]> countThreatTypeBySourceIps(@Param("ips") Collection<String> ips);
 
     /**
      * Throttle SUPPRESS path: fold a deduped repeat into the most recent

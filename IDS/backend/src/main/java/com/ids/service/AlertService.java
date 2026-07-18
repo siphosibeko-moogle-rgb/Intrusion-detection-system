@@ -125,12 +125,15 @@ public class AlertService {
     }
 
     // ── Queries ──────────────────────────────────────────────────────────
+    // Capped (newest-first, so the cap drops the OLDEST rows) — see the
+    // repository note on why unbounded reads of the raw alerts table are
+    // not allowed.
     public List<Alert> getRecent()               { return repo.findTop100ByOrderByTimestampDesc(); }
-    public List<Alert> getBySeverity(String sev) { return repo.findBySeverityOrderByTimestampDesc(sev); }
-    public List<Alert> getByType(String type)    { return repo.findByThreatTypeOrderByTimestampDesc(type); }
-    public List<Alert> getBySourceIp(String ip)  { return repo.findBySourceIpOrderByTimestampDesc(ip); }
-    public List<Alert> getBySourceMac(String mac){ return repo.findBySourceMacOrderByTimestampDesc(mac); }
-    public List<Alert> getSince(Instant since)   { return repo.findByTimestampAfterOrderByTimestampDesc(since); }
+    public List<Alert> getBySeverity(String sev) { return repo.findTop500BySeverityOrderByTimestampDesc(sev); }
+    public List<Alert> getByType(String type)    { return repo.findTop500ByThreatTypeOrderByTimestampDesc(type); }
+    public List<Alert> getBySourceIp(String ip)  { return repo.findTop500BySourceIpOrderByTimestampDesc(ip); }
+    public List<Alert> getBySourceMac(String mac){ return repo.findTop500BySourceMacOrderByTimestampDesc(mac); }
+    public List<Alert> getSince(Instant since)   { return repo.findTop1000ByTimestampAfterOrderByTimestampDesc(since); }
 
     public List<AlertSummary> getSummaries() { return summaryRepo.findAllByOrderByLastSeenDesc(); }
     public List<AlertSummary> getSummariesBySeverity(String sev) { return summaryRepo.findBySeverityOrderByLastSeenDesc(sev); }
@@ -245,6 +248,10 @@ public class AlertService {
         long high     = alerts.stream().filter(a -> "HIGH".equals(a.getSeverity())).count();
         long medium   = alerts.stream().filter(a -> "MEDIUM".equals(a.getSeverity())).count();
         long low      = alerts.stream().filter(a -> "LOW".equals(a.getSeverity())).count();
+        return threatScore(critical, high, medium, low);
+    }
+
+    private int threatScore(long critical, long high, long medium, long low) {
         int raw = (int)(critical * 25 + high * 10 + medium * 3 + low);
         return Math.min(100, raw);
     }
@@ -266,28 +273,61 @@ public class AlertService {
         summaryRepo.deleteAll();   // preserves raw alerts for forensic history
     }
     /**
-     * Powers the dashboard Threat Actors table. Reuses buildIpProfile()'s
-     * scoring formula per IP rather than duplicating it in SQL — see class-
-     * level discussion in chat for the tradeoff (consistency over raw query
-     * count; fine at dashboard scale — 1 + N queries for N <= 15 attackers).
+     * Powers the dashboard Threat Actors table.
+     *
+     * FIX (perf): previously called buildIpProfile() per ranked IP — 1 + N
+     * queries, each loading the ENTIRE alert history of exactly the noisiest
+     * IPs on every dashboard render. Now three grouped queries total: the
+     * ranked groups, severity counts per IP, and threat-type counts per IP.
+     * Scoring formula is unchanged (threatScore(), shared with
+     * buildIpProfile()), so both screens still agree.
      */
     public List<Map<String, Object>> getThreatActors(int limit) {
         List<AlertGroupProjection> ranked = repo.findAlertGroupsBySourceIp(); // one row per IP, already correctly aggregated
+        if (ranked.size() > limit) ranked = ranked.subList(0, limit);
+        if (ranked.isEmpty()) return List.of();
+
+        List<String> ips = ranked.stream()
+                .map(AlertGroupProjection::getSourceIp)
+                .collect(Collectors.toList());
+
+        // ip -> severity -> count
+        Map<String, Map<String, Long>> sevCounts = new HashMap<>();
+        for (Object[] r : repo.countSeverityBySourceIps(ips)) {
+            sevCounts.computeIfAbsent((String) r[0], k -> new HashMap<>())
+                     .put((String) r[1], (Long) r[2]);
+        }
+
+        // ip -> most frequent threat type
+        Map<String, String> topType = new HashMap<>();
+        Map<String, Long> topTypeCount = new HashMap<>();
+        for (Object[] r : repo.countThreatTypeBySourceIps(ips)) {
+            String ip = (String) r[0];
+            long count = (Long) r[2];
+            if (count > topTypeCount.getOrDefault(ip, 0L)) {
+                topTypeCount.put(ip, count);
+                topType.put(ip, (String) r[1]);
+            }
+        }
+
         List<Map<String, Object>> actors = new ArrayList<>();
         int rank = 1;
         for (AlertGroupProjection row : ranked) {
-            if (actors.size() >= limit) break;
             String ip = row.getSourceIp();
-            IpProfileDTO profile = buildIpProfile(ip);
-            if (profile == null) continue;
+            Map<String, Long> sev = sevCounts.getOrDefault(ip, Map.of());
+            int score = threatScore(
+                    sev.getOrDefault("CRITICAL", 0L),
+                    sev.getOrDefault("HIGH", 0L),
+                    sev.getOrDefault("MEDIUM", 0L),
+                    sev.getOrDefault("LOW", 0L));
 
             Map<String, Object> actor = new LinkedHashMap<>();
             actor.put("rank", rank++);
             actor.put("ip", ip);
-            actor.put("threatScore", profile.threatScore());
-            actor.put("totalAlerts", profile.totalAlerts());
-            actor.put("topThreatType", profile.topThreatType());
-            actor.put("lastSeen", profile.lastSeen());
+            actor.put("threatScore", score);
+            actor.put("totalAlerts", row.getAlertCount());
+            actor.put("topThreatType", topType.getOrDefault(ip, "UNKNOWN"));
+            actor.put("lastSeen", row.getLastSeen());
             actors.add(actor);
         }
         return actors;

@@ -6,6 +6,7 @@ import com.ids.service.AlertService;
 import com.ids.service.EngineKeyService;
 import com.ids.service.OrgWhitelistService;
 
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -306,6 +307,11 @@ public class AlertController {
      */
     @GetMapping("/conversation")
     public ResponseEntity<?> getConversation(@RequestParam String ip1, @RequestParam String ip2) {
-        return ResponseEntity.ok(alertRepository.findConversation(ip1, ip2));
+        // Repo returns the 1000 most recent (newest-first) — reverse back to
+        // chronological so the response shape stays a timeline.
+        List<Alert> conversation = new ArrayList<>(
+                alertRepository.findConversation(ip1, ip2, PageRequest.of(0, 1000)));
+        java.util.Collections.reverse(conversation);
+        return ResponseEntity.ok(conversation);
     }
 }
