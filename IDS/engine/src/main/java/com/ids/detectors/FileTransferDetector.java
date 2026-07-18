@@ -64,7 +64,9 @@ public class FileTransferDetector implements Detector {
         this.whitelist = whitelist;
     }
 
-    public void analyze(PacketContext ctx, String tcpPayload) {
+    @Override
+    public void analyze(PacketContext ctx) {
+        String tcpPayload = ctx.getHttpPayload();
 
         if (!ctx.isTcp()) return;
 

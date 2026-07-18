@@ -84,7 +84,9 @@ public class HttpAnomalyDetector implements Detector {
         this.whitelist = whitelist;
     }
 
-    public void analyze(PacketContext ctx, String httpPayload) {
+    @Override
+    public void analyze(PacketContext ctx) {
+        String httpPayload = ctx.getHttpPayload();
 
         if (!ctx.isTcp()) return;
 

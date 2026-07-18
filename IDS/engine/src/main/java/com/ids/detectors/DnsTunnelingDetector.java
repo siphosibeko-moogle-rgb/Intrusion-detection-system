@@ -40,7 +40,9 @@ public class DnsTunnelingDetector implements Detector {
         this.whitelist = whitelist;
     }
 
-    public void analyze(PacketContext ctx, byte[] udpPayload) {
+    @Override
+    public void analyze(PacketContext ctx) {
+        byte[] udpPayload = ctx.getUdpPayload();
 
         //Only DNS traffic
         if (!(ctx.isUdp() || ctx.isTcp())) return;

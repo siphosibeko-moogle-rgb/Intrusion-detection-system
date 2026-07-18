@@ -23,6 +23,15 @@ public class PacketContext {
     // ICMP
     private boolean icmpEchoRequest;
 
+    // ── Payloads — extracted ONCE by the engine before detector dispatch ──
+    // udpPayload:  raw UDP payload bytes; null for non-UDP packets or when
+    //              extraction failed.
+    // httpPayload: decoded TCP payload, but only when it starts with an HTTP
+    //              method verb; null for everything else (including plain
+    //              TCP data). Detectors must null-check both.
+    private byte[] udpPayload;
+    private String httpPayload;
+
     // ── IP addresses — always stored as clean dotted-decimal strings ───
     // PacketParser is responsible for calling getHostAddress() before
     // passing values here. These setters accept String only — never
@@ -84,6 +93,13 @@ public class PacketContext {
     public void setPayloadLength(int payloadLength) {
         this.payloadLength = payloadLength;
     }
+
+    // ── Payloads ───────────────────────────────────────────────────────
+    public byte[] getUdpPayload()             { return udpPayload; }
+    public void   setUdpPayload(byte[] v)     { this.udpPayload = v; }
+
+    public String getHttpPayload()            { return httpPayload; }
+    public void   setHttpPayload(String v)    { this.httpPayload = v; }
     // ── Protocol helpers ───────────────────────────────────────────────
     public boolean isTcp()  { return "TCP".equalsIgnoreCase(protocol); }
     public boolean isUdp()  { return "UDP".equalsIgnoreCase(protocol); }

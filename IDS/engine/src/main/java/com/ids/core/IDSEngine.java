@@ -26,28 +26,17 @@ public class IDSEngine {
     private static final int    TIMEOUT_MS = 10;
     private static final String LOG_FILE   = "/app/logs/ids-alerts.log";
 
-    //Detectors
-    private IcmpAbuseDetector           icmpDetector;
-    private NmapScanDetector            nmapDetector;
-    private WhitelistViolationDetector  whitelistDetector;
-    private ArpSpoofingDetector         arpDetector;
-    private DnsTunnelingDetector        dnsDetector;
-    private DataExfiltrationDetector    exfilDetector;
-    private AfterHoursDetector          afterHoursDetector;
-    private BruteForceDetector          bruteForceDetector;
-    private BeaconingDetector           beaconingDetector;
-    private LateralMovementDetector     lateralMovementDetector;
-    private HttpAnomalyDetector         httpAnomalyDetector;
-    private RogueDHCPDetector           rogueDhcpDetector;
-    private FileTransferDetector        fileTransferDetector;
-    private DataStagingDetector         dataStagingDetector;
-    private UserBehaviorAnomalyDetector ubaDetector;
-    private LowAndSlowScanDetector      lowSlowDetector;
-    private PortKnockingDetector        portKnockingDetector;
-    private SqlInjectionDetector        sqlInjectionDetector;
-    private SynFloodDetector            synFloodDetector;
-
+    // Detectors — process() and cleanup() iterate this list; nothing else
+    // dispatches by name. Adding a detector = one add() line in start().
     private final List<Detector> detectors = new ArrayList<>();
+
+    // ARP-path detectors are the exception: process() routes raw ARP frames
+    // to their analyzeArp(Packet) before the whitelist gate, because ARP
+    // analysis needs Ethernet/ARP headers PacketContext doesn't carry.
+    // Both are ALSO in the detectors list (whitelistDetector for its
+    // behavioral analyze(ctx), arpDetector for cleanup()).
+    private WhitelistViolationDetector whitelistDetector;
+    private ArpSpoofingDetector        arpDetector;
 
     private AlertManager     alertManager;
     private NetworkWhitelist whitelist;
@@ -126,61 +115,43 @@ public class IDSEngine {
         whitelist.setTokenSupplier(() -> loginToBackend(backendUrl));
         scheduler.scheduleAtFixedRate(whitelist::refresh, 30, 30, TimeUnit.SECONDS);
 
-        // 4. All detectors
+        // 4. All detectors. One add() per detector — process() and cleanup()
+        //    iterate the list, so this is the only place a detector is wired.
         String subnet = whitelist.getSubnet();
 
-        icmpDetector            = new IcmpAbuseDetector(alertManager);
-        nmapDetector            = new NmapScanDetector(alertManager, whitelist);
         whitelistDetector = new WhitelistViolationDetector(alertManager, whitelist);
-        arpDetector             = new ArpSpoofingDetector(alertManager, whitelist.getGateway());
-        dnsDetector             = new DnsTunnelingDetector(alertManager, whitelist);
-        exfilDetector           = new DataExfiltrationDetector(alertManager, whitelist);
-        afterHoursDetector      = new AfterHoursDetector(alertManager, whitelist,
-                                          whitelist.getWorkStartHour(), whitelist.getWorkEndHour(),
-                                          whitelist.getWorkTimezone(), whitelist.isWeekendAlert());
-        bruteForceDetector      = new BruteForceDetector(alertManager, whitelist);
-        beaconingDetector       = new BeaconingDetector(alertManager, whitelist);
+        arpDetector       = new ArpSpoofingDetector(alertManager, whitelist.getGateway());
+
+        detectors.add(new IcmpAbuseDetector(alertManager));
+        detectors.add(new NmapScanDetector(alertManager, whitelist));
+        detectors.add(whitelistDetector);
+        detectors.add(new DnsTunnelingDetector(alertManager, whitelist));
+        detectors.add(new DataExfiltrationDetector(alertManager, whitelist));
+        detectors.add(new AfterHoursDetector(alertManager, whitelist,
+                whitelist.getWorkStartHour(), whitelist.getWorkEndHour(),
+                whitelist.getWorkTimezone(), whitelist.isWeekendAlert()));
+        detectors.add(new BruteForceDetector(alertManager, whitelist));
+        detectors.add(new BeaconingDetector(alertManager, whitelist));
         // was new LateralMovementDetector(alertManager, subnet) — subnet
         // is a leftover from before this detector added whitelist.isInternal()
         // and isTrustedScanner() checks; constructor takes the whitelist now.
-        lateralMovementDetector = new LateralMovementDetector(alertManager, whitelist);
-        httpAnomalyDetector     = new HttpAnomalyDetector(alertManager, whitelist);
+        detectors.add(new LateralMovementDetector(alertManager, whitelist));
+        detectors.add(new PortKnockingDetector(alertManager, whitelist));
+        detectors.add(new DataStagingDetector(alertManager, whitelist));
+        detectors.add(new UserBehaviorAnomalyDetector(alertManager, whitelist));
+        detectors.add(new LowAndSlowScanDetector(alertManager, whitelist));
+        detectors.add(new SynFloodDetector(alertManager));
+        detectors.add(new SqlInjectionDetector(alertManager, whitelist));
+        detectors.add(new HttpAnomalyDetector(alertManager, whitelist));
+        detectors.add(new FileTransferDetector(alertManager, whitelist));
         // new RogueDHCPDetector(alertManager, whitelist.getGateway()) —
         // getGateway() is leftover from the old auto-learn-first-server logic,
         // which was a real bypass (an attacker racing your real DHCP server on
         // startup could get permanently trusted). Replaced with an explicit
         // whitelist.isTrustedDhcpServer(mac) allowlist check inside the detector.
-        rogueDhcpDetector       = new RogueDHCPDetector(alertManager, whitelist);
-        fileTransferDetector = new FileTransferDetector(alertManager, whitelist);
-        dataStagingDetector     = new DataStagingDetector(alertManager, whitelist);
-        ubaDetector             = new UserBehaviorAnomalyDetector(alertManager, whitelist);
-        // FIX: all three below gained whitelist.isTrustedScanner() exemptions
-        // (so your own vuln scanner / sqlmap / automation doesn't page you)
-        // but were still being constructed with alertManager only.
-        lowSlowDetector         = new LowAndSlowScanDetector(alertManager, whitelist);
-        portKnockingDetector    = new PortKnockingDetector(alertManager, whitelist);
-        sqlInjectionDetector    = new SqlInjectionDetector(alertManager, whitelist);
-        synFloodDetector        = new SynFloodDetector(alertManager);
-
-        detectors.add(icmpDetector);
-        detectors.add(nmapDetector);
-        detectors.add(whitelistDetector);
+        detectors.add(new RogueDHCPDetector(alertManager, whitelist));
+        // ARP-path only: analyze(ctx) is a no-op; listed for cleanup().
         detectors.add(arpDetector);
-        detectors.add(dnsDetector);
-        detectors.add(exfilDetector);
-        detectors.add(afterHoursDetector);
-        detectors.add(bruteForceDetector);
-        detectors.add(beaconingDetector);
-        detectors.add(lateralMovementDetector);
-        detectors.add(httpAnomalyDetector);
-        detectors.add(rogueDhcpDetector);
-        detectors.add(fileTransferDetector);
-        detectors.add(dataStagingDetector);
-        detectors.add(ubaDetector);
-        detectors.add(lowSlowDetector);
-        detectors.add(portKnockingDetector);
-        detectors.add(sqlInjectionDetector);
-        detectors.add(synFloodDetector);
 
         // 5. Config summary
         System.out.println("Subnet:  " + subnet);
@@ -384,13 +355,8 @@ public class IDSEngine {
             // ARP path — runs before whitelist gate to maintain device state
             if ("ARP".equalsIgnoreCase(proto)) {
                 whitelistDetector.analyzeArp(packet);
-                arpDetector.analyze(packet);
+                arpDetector.analyzeArp(packet);
                 return;
-            }
-
-            byte[] udpPayload = null;
-            if ("UDP".equalsIgnoreCase(proto)) {
-                udpPayload = extractUdpPayload(packet);
             }
 
             // Global whitelist gate — trusted source IPs skip behavioral detectors.
@@ -398,32 +364,20 @@ public class IDSEngine {
             // falls through to the detectors, which null-check internally.
             if (whitelist.isTrusted(ctx.getSrcIp())) return;
 
-            // Behavioral detectors
-            icmpDetector.analyze(ctx);
-            nmapDetector.analyze(ctx);
-            dnsDetector.analyze(ctx, udpPayload);
-            afterHoursDetector.analyze(ctx);
-            whitelistDetector.analyze(ctx);
-            exfilDetector.analyze(ctx);
-            bruteForceDetector.analyze(ctx);
-            portKnockingDetector.analyze(ctx);
-            beaconingDetector.analyze(ctx);
-            lateralMovementDetector.analyze(ctx);
-            dataStagingDetector.analyze(ctx);
-            ubaDetector.analyze(ctx);
-            lowSlowDetector.analyze(ctx);
-            synFloodDetector.analyze(ctx);
-
-            if ("TCP".equalsIgnoreCase(proto)) {
-                String httpPayload = extractHttpPayload(packet);
-                sqlInjectionDetector.analyze(ctx, httpPayload);
-                httpAnomalyDetector.analyze(ctx, httpPayload);
-                fileTransferDetector.analyze(ctx, httpPayload);
+            // Payloads — extracted once here, carried on the context.
+            // Detectors that need them read ctx.getUdpPayload()/getHttpPayload()
+            // (null when absent or not applicable).
+            if ("UDP".equalsIgnoreCase(proto)) {
+                ctx.setUdpPayload(extractUdpPayload(packet));
+            } else if ("TCP".equalsIgnoreCase(proto)) {
+                ctx.setHttpPayload(extractHttpPayload(packet));
             }
 
-            if ("UDP".equalsIgnoreCase(proto)) {
-               
-                rogueDhcpDetector.analyze(ctx, udpPayload);
+            // Behavioral detectors — uniform dispatch. Protocol/port routing
+            // lives inside each detector (they all self-gate and early-return
+            // on traffic that isn't theirs), not here.
+            for (Detector detector : detectors) {
+                detector.analyze(ctx);
             }
 
         } catch (Exception e) {

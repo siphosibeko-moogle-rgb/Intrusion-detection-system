@@ -59,7 +59,9 @@ public class RogueDHCPDetector implements Detector {
      * @param ctx parsed packet context
      * @param udpPayload raw UDP payload bytes — pass null if unavailable
      */
-    public void analyze(PacketContext ctx, byte[] udpPayload) {
+    @Override
+    public void analyze(PacketContext ctx) {
+        byte[] udpPayload = ctx.getUdpPayload();
 
         if (!ctx.isUdp()) return;
         if (ctx.getSrcPort() != DHCP_SERVER_PORT) return;

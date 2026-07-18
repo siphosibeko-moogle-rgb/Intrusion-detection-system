@@ -33,8 +33,19 @@ public class ArpSpoofingDetector implements Detector {
         this.gatewayIp    = gatewayIp;
     }
 
-    public void analyze(Packet packet) {
-        if (!(packet instanceof EthernetPacket eth)) 
+    /**
+     * ARP frames never reach the behavioral dispatch loop — the engine
+     * routes them to analyzeArp(Packet) before the whitelist gate, because
+     * ARP analysis needs the raw Ethernet/ARP headers PacketContext doesn't
+     * carry. Nothing to do here.
+     */
+    @Override
+    public void analyze(com.ids.models.PacketContext ctx) {
+        // intentionally empty — see analyzeArp
+    }
+
+    public void analyzeArp(Packet packet) {
+        if (!(packet instanceof EthernetPacket eth))
         	return;
         if (!(eth.getPayload() instanceof ArpPacket arp)) 
         	return;
