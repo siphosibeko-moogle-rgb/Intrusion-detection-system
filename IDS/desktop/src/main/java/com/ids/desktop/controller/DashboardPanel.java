@@ -25,6 +25,8 @@ import javafx.scene.chart.PieChart;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -102,8 +104,16 @@ public class DashboardPanel extends VBox {
     private PieChart severityChart;
 
     // ── Tables ──────────────────────────────────────────────────────────
-    private TableView<ThreatActorRow> threatActorsTable;
-    private final ObservableList<ThreatActorRow> threatActors = FXCollections.observableArrayList();
+    // Top Alerts and Threat Actors are each split Active/Whitelisted: two
+    // backing lists per section, one tab per list. The Tab references exist
+    // only so refresh can rewrite the "(n)" counts in the titles.
+    private final ObservableList<TopAlertRow> activeAlerts = FXCollections.observableArrayList();
+    private final ObservableList<TopAlertRow> whitelistedAlerts = FXCollections.observableArrayList();
+    private Tab tabAlertsActive, tabAlertsWhitelisted;
+
+    private final ObservableList<ThreatActorRow> activeActors = FXCollections.observableArrayList();
+    private final ObservableList<ThreatActorRow> whitelistedActors = FXCollections.observableArrayList();
+    private Tab tabActorsActive, tabActorsWhitelisted;
 
     private TableView<DashCaseRow> recentCasesTable;
     private final ObservableList<DashCaseRow> recentCases = FXCollections.observableArrayList();
@@ -159,6 +169,7 @@ public class DashboardPanel extends VBox {
         content.getChildren().addAll(
                 buildStatCardsRow(),
                 buildChartsRow(),
+                buildTopAlertsSection(),
                 buildAlertsAndHealthRow(),
                 buildRecentCasesSection()
         );
@@ -266,7 +277,80 @@ public class DashboardPanel extends VBox {
         return row;
     }
 
-    
+    // ── Row 3: Top Alerts (Active / Whitelisted) ────────────────────────
+
+    private VBox buildTopAlertsSection() {
+        VBox box = panelContainer("Top Alerts");
+        TableView<TopAlertRow> activeTable =
+                buildTopAlertsTable(activeAlerts, "No alerts yet.");
+        TableView<TopAlertRow> whitelistedTable =
+                buildTopAlertsTable(whitelistedAlerts, "No whitelisted hosts with recent activity.");
+        activeTable.setPrefHeight(240);
+        whitelistedTable.setPrefHeight(240);
+        tabAlertsActive      = new Tab("Active (0)", activeTable);
+        tabAlertsWhitelisted = new Tab("Whitelisted (0)", whitelistedTable);
+        box.getChildren().add(splitTabPane(tabAlertsActive, tabAlertsWhitelisted));
+        return box;
+    }
+
+    private TableView<TopAlertRow> buildTopAlertsTable(
+            ObservableList<TopAlertRow> items, String placeholder) {
+        TableView<TopAlertRow> tv = new TableView<>();
+        tv.setStyle("-fx-background-color: " + BG_CARD + ";");
+        tv.setItems(items);
+        tv.setPlaceholder(new Label(placeholder));
+
+        TableColumn<TopAlertRow, String> colTime = new TableColumn<>("Time");
+        colTime.setCellValueFactory(new PropertyValueFactory<>("timestamp"));
+
+        TableColumn<TopAlertRow, String> colSeverity = new TableColumn<>("Severity");
+        colSeverity.setCellValueFactory(new PropertyValueFactory<>("severity"));
+        colSeverity.setCellFactory(col -> new TableCell<>() {
+            @Override protected void updateItem(String sev, boolean empty) {
+                super.updateItem(sev, empty);
+                if (empty || sev == null) { setText(null); setStyle(""); return; }
+                setText(sev);
+                setStyle("-fx-text-fill: " + severityColor(sev) + "; -fx-font-weight: bold;");
+            }
+        });
+
+        TableColumn<TopAlertRow, String> colThreat = new TableColumn<>("Threat Type");
+        colThreat.setCellValueFactory(new PropertyValueFactory<>("threatType"));
+
+        TableColumn<TopAlertRow, String> colSource = new TableColumn<>("Source IP");
+        colSource.setCellValueFactory(new PropertyValueFactory<>("sourceIp"));
+        colSource.setCellFactory(col -> ipLinkCell());
+
+        TableColumn<TopAlertRow, String> colDest = new TableColumn<>("Dest IP");
+        colDest.setCellValueFactory(new PropertyValueFactory<>("destIp"));
+
+        TableColumn<TopAlertRow, String> colProtocol = new TableColumn<>("Protocol");
+        colProtocol.setCellValueFactory(new PropertyValueFactory<>("protocol"));
+
+        // Threat Type is the free-text column (hover shows the full value).
+        TableLayout.constrain(tv);
+        TableLayout.bounded(colTime,      55,  70,  95);
+        TableLayout.bounded(colSeverity,  70,  90, 110);
+        TableLayout.flex   (colThreat,   120, 160);
+        TableLayout.bounded(colSource,   100, 120, 150);
+        TableLayout.bounded(colDest,     100, 120, 150);
+        TableLayout.bounded(colProtocol,  60,  80, 100);
+        TableLayout.tooltipCells(colThreat);
+
+        tv.getColumns().addAll(List.of(colTime, colSeverity, colThreat, colSource, colDest, colProtocol));
+        return tv;
+    }
+
+    private String severityColor(String sev) {
+        return switch (sev.toUpperCase()) {
+            case "CRITICAL" -> COLOR_CRITICAL;
+            case "HIGH"     -> COLOR_HIGH;
+            case "MEDIUM"   -> COLOR_MEDIUM;
+            case "LOW"      -> COLOR_LOW;
+            default         -> TEXT_MAIN;
+        };
+    }
+
     private VBox buildRecentCasesSection() {
         VBox box = panelContainer("Recent Investigations");
         recentCasesTable = buildRecentCasesTable();
@@ -337,7 +421,6 @@ public class DashboardPanel extends VBox {
             Platform.runLater(() -> {
             	applySummary(summary);
                 applyThreatActors(actorsJson);
-                applyThreatActors(actorsJson);
                 lblLastUpdated.setText("Last updated " +
                         DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
                                 .format(Instant.now()));
@@ -381,7 +464,25 @@ public class DashboardPanel extends VBox {
             seriesCritical.getData().add(new XYChart.Data<>(label, point.path("critical").asLong(0)));
         }
 
-        
+        // Top Alerts — partition into the Active/Whitelisted tabs
+        List<TopAlertRow> active = new ArrayList<>();
+        List<TopAlertRow> whitelisted = new ArrayList<>();
+        for (JsonNode n : s.path("recentAlerts")) {
+            TopAlertRow row = new TopAlertRow(
+                    formatBucketTime(n.path("timestamp").asText("")),
+                    n.path("severity").asText(""),
+                    n.path("threatType").asText(""),
+                    n.path("sourceIp").asText(""),
+                    n.path("destIp").asText(""),
+                    n.path("protocol").asText(""),
+                    n.path("whitelisted").asBoolean(false)
+            );
+            (row.isWhitelisted() ? whitelisted : active).add(row);
+        }
+        activeAlerts.setAll(active);
+        whitelistedAlerts.setAll(whitelisted);
+        tabAlertsActive.setText("Active (" + active.size() + ")");
+        tabAlertsWhitelisted.setText("Whitelisted (" + whitelisted.size() + ")");
 
         // Recent cases table
         List<DashCaseRow> caseRows = new ArrayList<>();
@@ -416,15 +517,17 @@ public class DashboardPanel extends VBox {
         private final int rank;
         private final String ip, topThreatType, lastSeen;
         private final int threatScore, totalAlerts;
+        private final boolean whitelisted;
 
         public ThreatActorRow(int rank, String ip, int threatScore, int totalAlerts,
-                               String topThreatType, String lastSeen) {
+                               String topThreatType, String lastSeen, boolean whitelisted) {
             this.rank = rank;
             this.ip = ip;
             this.threatScore = threatScore;
             this.totalAlerts = totalAlerts;
             this.topThreatType = topThreatType;
             this.lastSeen = lastSeen;
+            this.whitelisted = whitelisted;
         }
 
         public int getRank() { return rank; }
@@ -433,6 +536,32 @@ public class DashboardPanel extends VBox {
         public int getTotalAlerts() { return totalAlerts; }
         public String getTopThreatType() { return topThreatType; }
         public String getLastSeen() { return lastSeen; }
+        public boolean isWhitelisted() { return whitelisted; }
+    }
+
+    public static class TopAlertRow {
+        private final String timestamp, severity, threatType, sourceIp, destIp, protocol;
+        private final boolean whitelisted;
+
+        public TopAlertRow(String timestamp, String severity, String threatType,
+                            String sourceIp, String destIp, String protocol,
+                            boolean whitelisted) {
+            this.timestamp = timestamp;
+            this.severity = severity;
+            this.threatType = threatType;
+            this.sourceIp = sourceIp;
+            this.destIp = destIp;
+            this.protocol = protocol;
+            this.whitelisted = whitelisted;
+        }
+
+        public String getTimestamp() { return timestamp; }
+        public String getSeverity() { return severity; }
+        public String getThreatType() { return threatType; }
+        public String getSourceIp() { return sourceIp; }
+        public String getDestIp() { return destIp; }
+        public String getProtocol() { return protocol; }
+        public boolean isWhitelisted() { return whitelisted; }
     }
 
     public static class DashCaseRow {
@@ -456,39 +585,52 @@ public class DashboardPanel extends VBox {
         public String getAssignedTo() { return assignedTo; }
     }
     private void applyThreatActors(JsonNode actorsNode) {
-        List<ThreatActorRow> rows = new ArrayList<>();
+        List<ThreatActorRow> active = new ArrayList<>();
+        List<ThreatActorRow> whitelisted = new ArrayList<>();
         for (JsonNode n : actorsNode) {
-            rows.add(new ThreatActorRow(
+            ThreatActorRow row = new ThreatActorRow(
                 n.path("rank").asInt(0),
                 n.path("ip").asText(""),
                 n.path("threatScore").asInt(0),
                 (int) n.path("totalAlerts").asLong(0),
                 n.path("topThreatType").asText(""),
-                formatBucketTime(n.path("lastSeen").asText(""))
-            ));
+                formatBucketTime(n.path("lastSeen").asText("")),
+                n.path("whitelisted").asBoolean(false)
+            );
+            (row.isWhitelisted() ? whitelisted : active).add(row);
         }
-        threatActors.setAll(rows);
+        activeActors.setAll(active);
+        whitelistedActors.setAll(whitelisted);
+        tabActorsActive.setText("Active (" + active.size() + ")");
+        tabActorsWhitelisted.setText("Whitelisted (" + whitelisted.size() + ")");
     }
     private VBox buildAlertsAndHealthRow() {
         VBox actorsBox = panelContainer("Threat Actors");
-        threatActorsTable = buildThreatActorsTable();
-        threatActorsTable.setPrefHeight(320); // taller now that it owns the full row
-        actorsBox.getChildren().add(threatActorsTable);
+        TableView<ThreatActorRow> activeTable =
+                buildThreatActorsTable(activeActors, "No threat actors yet.");
+        TableView<ThreatActorRow> whitelistedTable =
+                buildThreatActorsTable(whitelistedActors, "No whitelisted threat actors.");
+        activeTable.setPrefHeight(320); // taller now that it owns the full row
+        whitelistedTable.setPrefHeight(320);
+        tabActorsActive      = new Tab("Active (0)", activeTable);
+        tabActorsWhitelisted = new Tab("Whitelisted (0)", whitelistedTable);
+        actorsBox.getChildren().add(splitTabPane(tabActorsActive, tabActorsWhitelisted));
         return actorsBox;
     }
 
-    private TableView<ThreatActorRow> buildThreatActorsTable() {
-        TableView<ThreatActorRow> tv = new TableView<>();
-        tv.setStyle("-fx-background-color: " + BG_CARD + ";");
-        tv.setItems(threatActors);
-        tv.setPlaceholder(new Label("No threat actors yet."));
+    /** Active/Whitelisted TabPane shared by Top Alerts and Threat Actors. */
+    private TabPane splitTabPane(Tab active, Tab whitelisted) {
+        active.setClosable(false);
+        whitelisted.setClosable(false);
+        TabPane pane = new TabPane(active, whitelisted);
+        pane.setStyle("-fx-background-color: " + BG_CARD + ";");
+        pane.getSelectionModel().select(active);
+        return pane;
+    }
 
-        TableColumn<ThreatActorRow, Number> colRank = new TableColumn<>("#");
-        colRank.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getRank()));
-
-        TableColumn<ThreatActorRow, String> colIp = new TableColumn<>("IP");
-        colIp.setCellValueFactory(new PropertyValueFactory<>("ip"));
-        colIp.setCellFactory(col -> new TableCell<>() {
+    /** Hyperlink-style cell for clickable Source IP columns (drill-down). */
+    private <R> TableCell<R, String> ipLinkCell() {
+        return new TableCell<>() {
             @Override protected void updateItem(String ip, boolean empty) {
                 super.updateItem(ip, empty);
                 if (empty || ip == null) { setText(null); setStyle(""); setOnMouseClicked(null); return; }
@@ -496,7 +638,22 @@ public class DashboardPanel extends VBox {
                 setStyle("-fx-text-fill: " + Theme.ACCENT + "; -fx-font-weight:bold; -fx-cursor:hand; -fx-underline:true;");
                 setOnMouseClicked(e -> { if (onIpClick != null) onIpClick.accept(ip); });
             }
-        });
+        };
+    }
+
+    private TableView<ThreatActorRow> buildThreatActorsTable(
+            ObservableList<ThreatActorRow> items, String placeholder) {
+        TableView<ThreatActorRow> tv = new TableView<>();
+        tv.setStyle("-fx-background-color: " + BG_CARD + ";");
+        tv.setItems(items);
+        tv.setPlaceholder(new Label(placeholder));
+
+        TableColumn<ThreatActorRow, Number> colRank = new TableColumn<>("#");
+        colRank.setCellValueFactory(c -> new javafx.beans.property.SimpleIntegerProperty(c.getValue().getRank()));
+
+        TableColumn<ThreatActorRow, String> colIp = new TableColumn<>("IP");
+        colIp.setCellValueFactory(new PropertyValueFactory<>("ip"));
+        colIp.setCellFactory(col -> ipLinkCell());
 
         TableColumn<ThreatActorRow, ThreatActorRow> colScore = new TableColumn<>("Threat Score");
         colScore.setCellValueFactory(c -> new javafx.beans.property.SimpleObjectProperty<>(c.getValue()));

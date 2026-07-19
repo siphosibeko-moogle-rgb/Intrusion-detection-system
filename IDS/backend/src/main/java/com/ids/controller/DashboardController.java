@@ -6,6 +6,7 @@ import com.ids.model.ForensicCase;
 import com.ids.repository.AlertSummaryRepository;
 import com.ids.service.AlertService;
 import com.ids.service.ForensicCaseService;
+import com.ids.service.OrgWhitelistService;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -50,15 +51,18 @@ public class DashboardController {
     private final AlertSummaryRepository summaryRepository;
     private final AlertService alertService;
     private final ForensicCaseService caseService;
+    private final OrgWhitelistService whitelistService;
     private final JdbcTemplate jdbcTemplate; // used only for a DB health ping
 
     public DashboardController(AlertSummaryRepository summaryRepository,
                                 AlertService alertService,
                                 ForensicCaseService caseService,
+                                OrgWhitelistService whitelistService,
                                 JdbcTemplate jdbcTemplate) {
         this.summaryRepository = summaryRepository;
         this.alertService = alertService;
         this.caseService = caseService;
+        this.whitelistService = whitelistService;
         this.jdbcTemplate = jdbcTemplate;
     }
     @GetMapping("/threat-actors")
@@ -175,6 +179,7 @@ public class DashboardController {
         row.put("sourceIp", a.getSourceIp());
         row.put("destIp", a.getDestIp());
         row.put("protocol", a.getProtocol());
+        row.put("whitelisted", whitelistService.isWhitelisted(a.getSourceIp()));
         return row;
     }
 

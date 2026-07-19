@@ -28,6 +28,13 @@ public class OrgWhitelistService {
 
     public List<OrgWhitelistEntry> getAll() { return repo.findAll(); }
 
+    public boolean isWhitelisted(String ip) {
+        if (ip == null || ip.isBlank()) return false;
+        return repo.findByIp(ip)
+                   .map(OrgWhitelistEntry::isApproved) // WHITELIST_RULE: approved-only.
+                   .orElse(false);                     // flip to .isPresent() for "any entry present"
+    }
+
     // ── Organization discovery (used by the Flagged IPs view) ────────────
     // org_whitelist doubles as the lookup cache: one row per external IP,
     // enriched once via ip-api.com and reused forever after.

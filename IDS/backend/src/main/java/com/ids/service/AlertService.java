@@ -23,17 +23,20 @@ public class AlertService {
     private final EmailAlertService      emailService;
     private final AlertSummaryRepository summaryRepo;
     private final AlertThrottleService   throttle;
+    private final OrgWhitelistService    whitelistService;
 
     public AlertService(AlertRepository repo,
                         SimpMessagingTemplate ws,
                         EmailAlertService emailService,
                         AlertSummaryRepository summaryRepo,
-                        AlertThrottleService throttle) {
-        this.repo         = repo;
-        this.ws           = ws;
-        this.emailService = emailService;
-        this.summaryRepo  = summaryRepo;
-        this.throttle     = throttle;
+                        AlertThrottleService throttle,
+                        OrgWhitelistService whitelistService) {
+        this.repo             = repo;
+        this.ws               = ws;
+        this.emailService     = emailService;
+        this.summaryRepo      = summaryRepo;
+        this.throttle         = throttle;
+        this.whitelistService = whitelistService;
     }
 
     // ── Flagged IPs (UNKNOWN_IP / OUTSIDE_SUBNET) ─────────────────────────
@@ -328,6 +331,7 @@ public class AlertService {
             actor.put("totalAlerts", row.getAlertCount());
             actor.put("topThreatType", topType.getOrDefault(ip, "UNKNOWN"));
             actor.put("lastSeen", row.getLastSeen());
+            actor.put("whitelisted", whitelistService.isWhitelisted(ip));
             actors.add(actor);
         }
         return actors;
