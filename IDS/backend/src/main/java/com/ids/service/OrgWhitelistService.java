@@ -20,19 +20,29 @@ public class OrgWhitelistService {
 
     private final OrgWhitelistRepository repo;
     private final RestTemplate restTemplate;
+    private final TrustedCidrRangeService trustedCidrRanges;
 
-    public OrgWhitelistService(OrgWhitelistRepository repo) {
-        this.repo         = repo;
-        this.restTemplate = new RestTemplate();
+    public OrgWhitelistService(OrgWhitelistRepository repo, TrustedCidrRangeService trustedCidrRanges) {
+        this.repo              = repo;
+        this.restTemplate      = new RestTemplate();
+        this.trustedCidrRanges = trustedCidrRanges;
     }
 
     public List<OrgWhitelistEntry> getAll() { return repo.findAll(); }
 
+    /**
+     * True if EITHER an approved org_whitelist row matches this exact IP, OR
+     * the IP falls inside a trusted internal CIDR range (see
+     * TrustedCidrRangeService — covers private IPs, which upsertFromIp()
+     * never stores here). Exact-IP checked first as the fast path.
+     */
     public boolean isWhitelisted(String ip) {
         if (ip == null || ip.isBlank()) return false;
-        return repo.findByIp(ip)
-                   .map(OrgWhitelistEntry::isApproved) // WHITELIST_RULE: approved-only.
+        boolean approvedExact = repo.findByIp(ip)
+                   .map(OrgWhitelistEntry::isApproved) // WHITELIST_RULE: approved-only for org table.
                    .orElse(false);                     // flip to .isPresent() for "any entry present"
+        if (approvedExact) return true;
+        return trustedCidrRanges.isTrustedRange(ip);
     }
 
     // ── Organization discovery (used by the Flagged IPs view) ────────────
