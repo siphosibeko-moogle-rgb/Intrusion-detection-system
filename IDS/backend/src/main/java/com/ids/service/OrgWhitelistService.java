@@ -181,12 +181,18 @@ public class OrgWhitelistService {
     public void delete(Long id) { repo.deleteById(id); }
 
     public static boolean isPrivateIp(String ip) {
-        return ip.startsWith("10.")
-            || ip.startsWith("192.168.")
-            || ip.startsWith("172.16.") || ip.startsWith("172.17.")
-            || ip.startsWith("172.18.") || ip.startsWith("172.19.")
-            || ip.startsWith("172.2")   || ip.startsWith("172.3")
-            || ip.startsWith("127.")
-            || ip.equals("::1");
+        if (ip == null || ip.isBlank()) return false;
+        if (ip.equals("::1")) return true;
+        if (ip.startsWith("10.") || ip.startsWith("192.168.") || ip.startsWith("127.")) return true;
+        if (ip.startsWith("172.")) {
+            String[] p = ip.split("\\.");
+            if (p.length >= 2) {
+                try {
+                    int b = Integer.parseInt(p[1]);
+                    return b >= 16 && b <= 31;
+                } catch (NumberFormatException ignored) { }
+            }
+        }
+        return false;
     }
 }
