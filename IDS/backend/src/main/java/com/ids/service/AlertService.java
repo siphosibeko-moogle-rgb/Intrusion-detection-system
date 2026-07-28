@@ -24,19 +24,22 @@ public class AlertService {
     private final AlertSummaryRepository summaryRepo;
     private final AlertThrottleService   throttle;
     private final OrgWhitelistService    whitelistService;
+    private final TrustedCidrRangeService trustedCidrRanges;
 
     public AlertService(AlertRepository repo,
                         SimpMessagingTemplate ws,
                         EmailAlertService emailService,
                         AlertSummaryRepository summaryRepo,
                         AlertThrottleService throttle,
-                        OrgWhitelistService whitelistService) {
+                        OrgWhitelistService whitelistService,
+                        TrustedCidrRangeService trustedCidrRanges) {
         this.repo             = repo;
         this.ws               = ws;
         this.emailService     = emailService;
         this.summaryRepo      = summaryRepo;
         this.throttle         = throttle;
         this.whitelistService = whitelistService;
+        this.trustedCidrRanges = trustedCidrRanges;
     }
 
     // ── Flagged IPs (UNKNOWN_IP / OUTSIDE_SUBNET) ─────────────────────────
@@ -280,10 +283,12 @@ public class AlertService {
      *
      * FIX (perf): previously called buildIpProfile() per ranked IP — 1 + N
      * queries, each loading the ENTIRE alert history of exactly the noisiest
-     * IPs on every dashboard render. Now three grouped queries total: the
-     * ranked groups, severity counts per IP, and threat-type counts per IP.
-     * Scoring formula is unchanged (threatScore(), shared with
-     * buildIpProfile()), so both screens still agree.
+     * IPs on every dashboard render. Now four grouped queries total: the
+     * ranked groups, severity counts per IP, threat-type counts per IP, and
+     * one batched approved-whitelist lookup (trusted-CIDR check stays
+     * in-loop since it's in-memory, not a DB call). Scoring formula is
+     * unchanged (threatScore(), shared with buildIpProfile()), so both
+     * screens still agree.
      */
     public List<Map<String, Object>> getThreatActors(int limit) {
         List<AlertGroupProjection> ranked = repo.findAlertGroupsBySourceIp(); // one row per IP, already correctly aggregated
@@ -293,6 +298,10 @@ public class AlertService {
         List<String> ips = ranked.stream()
                 .map(AlertGroupProjection::getSourceIp)
                 .collect(Collectors.toList());
+
+        // Batch-fetch approved org entries once — avoids the per-row
+        // whitelistService.isWhitelisted(ip) N+1 this method used to run.
+        Set<String> approved = whitelistService.approvedIpsAmong(ips);
 
         // ip -> severity -> count
         Map<String, Map<String, Long>> sevCounts = new HashMap<>();
@@ -331,7 +340,7 @@ public class AlertService {
             actor.put("totalAlerts", row.getAlertCount());
             actor.put("topThreatType", topType.getOrDefault(ip, "UNKNOWN"));
             actor.put("lastSeen", row.getLastSeen());
-            actor.put("whitelisted", whitelistService.isWhitelisted(ip));
+            actor.put("whitelisted", approved.contains(ip) || trustedCidrRanges.isTrustedRange(ip));
             actors.add(actor);
         }
         return actors;

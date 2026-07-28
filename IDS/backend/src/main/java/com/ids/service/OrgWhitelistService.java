@@ -7,6 +7,7 @@ import org.springframework.web.client.RestTemplate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,6 +63,16 @@ public class OrgWhitelistService {
         if (ips == null || ips.isEmpty()) return Map.of();
         Map<String, OrgWhitelistEntry> out = new HashMap<>();
         for (OrgWhitelistEntry e : repo.findByIpIn(ips)) out.put(e.getIp(), e);
+        return out;
+    }
+
+    /** Approved exact-match org IPs among the given set — one query. */
+    public Set<String> approvedIpsAmong(Collection<String> ips) {
+        if (ips == null || ips.isEmpty()) return Set.of();
+        Set<String> out = new HashSet<>();
+        for (OrgWhitelistEntry e : repo.findByIpIn(ips)) {
+            if (e.isApproved()) out.add(e.getIp());
+        }
         return out;
     }
 
