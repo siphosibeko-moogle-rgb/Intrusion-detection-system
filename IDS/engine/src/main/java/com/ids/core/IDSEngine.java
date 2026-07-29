@@ -209,7 +209,9 @@ public class IDSEngine {
      * Resolves which interfaces to capture on.
      *
      * Input forms:
-     *   "all"            → all relevant non-loopback interfaces (auto-detect)
+     *   "all"            → all relevant non-loopback interfaces (auto-detect),
+     *                      unless ids.capture.interfaces is configured — that
+     *                      allowlist then replaces auto-detect entirely
      *   "eth0"           → only eth0
      *   "wlp1s0,docker0" → exactly those two
      *   null             → same as "all"
@@ -233,6 +235,35 @@ public class IDSEngine {
         List<PcapNetworkInterface> all = Pcaps.findAllDevs();
         if (all == null || all.isEmpty())
             throw new RuntimeException("No network interfaces found — run as root/sudo");
+
+        // Config allowlist (ids.capture.interfaces): if set, it replaces
+        // auto-detect — the host may carry Docker bridges from unrelated
+        // projects, each of which would otherwise cost a pcap handle and
+        // capture thread for traffic this IDS doesn't care about.
+        // An explicit CLI interface list still wins over the property.
+        List<String> allowlist = whitelist.getCaptureInterfaces();
+        if ((arg == null || arg.equalsIgnoreCase("all")) && !allowlist.isEmpty()) {
+            List<PcapNetworkInterface> selected = new ArrayList<>();
+            List<String> skipped = new ArrayList<>();
+            for (PcapNetworkInterface i : all) {
+                if (allowlist.stream().anyMatch(n -> n.equalsIgnoreCase(i.getName()))) {
+                    selected.add(i);
+                } else if (!i.isLoopBack()) {
+                    skipped.add(i.getName());
+                }
+            }
+            for (String name : allowlist) {
+                if (selected.stream().noneMatch(i -> i.getName().equalsIgnoreCase(name))) {
+                    System.out.println("[IDS] WARNING: ids.capture.interfaces entry '"
+                        + name + "' not found on this host — skipping.");
+                }
+            }
+            System.out.println("[IDS] ids.capture.interfaces allowlist active — selected: "
+                + selected.stream().map(PcapNetworkInterface::getName).collect(Collectors.joining(", "))
+                + (skipped.isEmpty() ? "" : " | skipped: " + String.join(", ", skipped)));
+            if (!selected.isEmpty()) return selected;
+            System.out.println("[IDS] No allowlisted interfaces found. Falling back to auto-detect.");
+        }
 
         // Explicit list: "wlp1s0,br-64344a8a0f32"
         if (arg != null && !arg.equalsIgnoreCase("all")) {
@@ -357,6 +388,17 @@ public class IDSEngine {
                 whitelistDetector.analyzeArp(packet);
                 arpDetector.analyzeArp(packet);
                 return;
+            }
+
+            // Gateway MAC aliasing: every packet routed in from outside the
+            // local L2 domain arrives carrying the default gateway's MAC, so
+            // "MAC of an external IP" is always just the router. MAC/IP
+            // correlation is only meaningful inside the configured subnet
+            // (and Docker subnets) — blank the source MAC for everything
+            // else so downstream tracking keys on IP alone instead of
+            // recording the gateway MAC against every external address.
+            if (ctx.getSrcIp() != null && !whitelist.isInternal(ctx.getSrcIp())) {
+                ctx.setSrcMac(null);
             }
 
             // Global whitelist gate — trusted source IPs skip behavioral detectors.

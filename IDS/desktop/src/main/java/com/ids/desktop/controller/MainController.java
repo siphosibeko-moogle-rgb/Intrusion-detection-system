@@ -70,6 +70,7 @@ public class MainController implements Initializable {
     @FXML private TableColumn<FlaggedIpItem, Integer> colFlagHits;
     @FXML private CheckBox cbSelectAllFlagged;
     @FXML private Label    lblFlaggedCount;
+    @FXML private Tab      tabTriage;
 
     // Cases
     @FXML private TableView<CaseItem>            casesTable;
@@ -169,6 +170,7 @@ public class MainController implements Initializable {
                 colFlagSel, colFlagIp, colFlagMac, colFlagOrg, colFlagThreat,
                 colFlagSeverity, colFlagProto, colFlagHits, colFlagSeen,
                 cbSelectAllFlagged, lblFlaggedCount);
+        whitelistManager.bindTriageTab(tabTriage);
 
         caseBoard = new CaseBoardManager(
                 () -> dataLoader, () -> backend, this::isReady,

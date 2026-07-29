@@ -54,7 +54,7 @@ public class SecurityConfig {
                 .withUsername(u.getUsername())
                 .password(u.getPassword())
                 .roles(u.getRole() == null || u.getRole().isBlank()
-                        ? "USER" : u.getRole())
+                        ? "ANALYST" : u.getRole())
                 .build())
             .orElseThrow(() -> new UsernameNotFoundException("Unknown user"));
     }
@@ -91,6 +91,7 @@ public class SecurityConfig {
                         "/actuator/health",
                         "/actuator/info",
                         "/api/alerts/ingest",    // engine uses X-Engine-Key, validated in controller
+                        "/api/engine/heartbeat", // same X-Engine-Key scheme as ingest
                         "/ws/**"
                     ).permitAll()
 

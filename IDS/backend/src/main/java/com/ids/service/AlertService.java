@@ -43,8 +43,13 @@ public class AlertService {
     }
 
     // ── Flagged IPs (UNKNOWN_IP / OUTSIDE_SUBNET) ─────────────────────────
+    // Whitelisted sources (approved org entry OR trusted CIDR range) are
+    // display-side noise here — they're already resolved, so they shouldn't
+    // clutter the pending-triage list. Raw alert history is untouched.
     public List<Object[]> getFlaggedIpSummary() {
-        return repo.findFlaggedIpSummary();
+        return repo.findFlaggedIpSummary().stream()
+                .filter(row -> !whitelistService.isWhitelisted((String) row[0]))
+                .collect(Collectors.toList());
     }
 
     // ── Core alert persistence ────────────────────────────────────────────
@@ -327,6 +332,17 @@ public class AlertService {
         for (AlertGroupProjection row : ranked) {
             String ip = row.getSourceIp();
             Map<String, Long> sev = sevCounts.getOrDefault(ip, Map.of());
+            boolean whitelisted = approved.contains(ip) || trustedCidrRanges.isTrustedRange(ip);
+
+            // A whitelisted host whose only alerts are LOW/INFO identity
+            // noise (UNKNOWN_MAC, UNKNOWN_IP, GRATUITOUS_ARP, ...) shouldn't
+            // occupy a Whitelisted-tab row. Any MEDIUM+ alert still surfaces
+            // it — a trusted host doing something serious is never silenced.
+            boolean noiseOnly = sev.getOrDefault("CRITICAL", 0L) == 0L
+                    && sev.getOrDefault("HIGH", 0L) == 0L
+                    && sev.getOrDefault("MEDIUM", 0L) == 0L;
+            if (whitelisted && noiseOnly) continue;
+
             int score = threatScore(
                     sev.getOrDefault("CRITICAL", 0L),
                     sev.getOrDefault("HIGH", 0L),
@@ -340,7 +356,7 @@ public class AlertService {
             actor.put("totalAlerts", row.getAlertCount());
             actor.put("topThreatType", topType.getOrDefault(ip, "UNKNOWN"));
             actor.put("lastSeen", row.getLastSeen());
-            actor.put("whitelisted", approved.contains(ip) || trustedCidrRanges.isTrustedRange(ip));
+            actor.put("whitelisted", whitelisted);
             actors.add(actor);
         }
         return actors;

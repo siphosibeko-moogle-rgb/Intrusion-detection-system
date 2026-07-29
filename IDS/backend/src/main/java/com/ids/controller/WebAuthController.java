@@ -10,9 +10,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 /**
- * Web registration + login pages. Registration always creates a USER
- * account — role is never taken from the request. The email is stored in
- * the existing users.username column (desktop JWT login is unaffected).
+ * Web registration + login pages. Registration always creates an ANALYST
+ * account — role is never taken from the request. Web self-registration
+ * grants ANALYST (not ADMIN) because a web account has no web-UI access of
+ * its own anyway; ANALYST is what lets the account be used from the desktop
+ * client. The email is stored in the existing users.username column
+ * (desktop JWT login is unaffected).
  */
 @Controller
 public class WebAuthController {
@@ -53,7 +56,7 @@ public class WebAuthController {
             return "register";
         }
 
-        userRepo.save(new User(email.trim(), encoder.encode(password), "USER"));
+        userRepo.save(new User(email.trim(), encoder.encode(password), "ANALYST"));
         return "redirect:/login?registered";
     }
 }

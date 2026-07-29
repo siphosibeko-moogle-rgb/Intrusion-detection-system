@@ -447,8 +447,23 @@ public class BackendClient {
                 .addHeader("Authorization", "Bearer " + jwtToken)
                 .post(RequestBody.create(json, MediaType.get("application/json")))
                 .build())) {
-            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
+            if (!resp.isSuccessful()) throw new IOException(errorMessage(resp));
         }
+    }
+
+    /** Extracts the {"error": "..."} body Spring's error responses use;
+     *  falls back to "HTTP <code>" if the body isn't that shape. */
+    private String errorMessage(Response resp) {
+        try {
+            String body = resp.body() != null ? resp.body().string() : null;
+            if (body != null && !body.isEmpty()) {
+                String err = textOf(mapper.readTree(body), "error", "");
+                if (!err.isEmpty()) return err;
+            }
+        } catch (Exception ignored) {
+            // fall through to the generic status message below
+        }
+        return "HTTP " + resp.code();
     }
 
     public void put(String path, String json) throws IOException {

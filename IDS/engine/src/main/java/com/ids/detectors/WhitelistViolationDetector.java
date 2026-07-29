@@ -11,6 +11,7 @@ import org.pcap4j.packet.ArpPacket;
 import org.pcap4j.packet.Packet;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class WhitelistViolationDetector implements Detector {
@@ -27,6 +28,15 @@ public class WhitelistViolationDetector implements Detector {
     // device registry is empty.
     private final long startTime = System.currentTimeMillis();
     private static final long WARMUP_MS = 90_000L;
+
+    // Warmup log dedup: this runs on the drain-worker hot path, and
+    // System.out is a single synchronized PrintStream — one println per
+    // packet serializes every worker on that lock. Log each (ip, mac)
+    // pair once; add() returning true is the atomic first-seen guard.
+    // Bounded by a plain clear(): warmup lasts 90s, so worst case we
+    // re-log a handful of pairs once after a clear.
+    private final Set<String> warmupLogged = ConcurrentHashMap.newKeySet();
+    private static final int WARMUP_LOGGED_MAX = 10_000;
 
     public WhitelistViolationDetector(AlertSink alertManager,
                                       NetworkWhitelist whitelist ) {
@@ -60,7 +70,10 @@ public class WhitelistViolationDetector implements Detector {
 
         
         if (!warmedUp) {
-            System.out.printf("[Whitelist] (warmup, not alerting) seen: %s [%s]%n", srcIP, srcMac);
+            if (warmupLogged.size() > WARMUP_LOGGED_MAX) warmupLogged.clear();
+            if (warmupLogged.add(srcIP + "|" + srcMac)) {
+                System.out.printf("[Whitelist] (warmup, not alerting) seen: %s [%s]%n", srcIP, srcMac);
+            }
             return;
         }
        

@@ -14,14 +14,20 @@ public class OrgWhitelistController {
     public OrgWhitelistController(OrgWhitelistService svc) { this.svc = svc; }
     @GetMapping
     public List<OrgWhitelistEntry> getAll() { return svc.getAll(); }
-    // ADMIN only: approving an org whitelists its IP ranges past the detectors.
-    @PreAuthorize("hasRole('ADMIN')")
+    // Approving an org whitelists its IP ranges past the detectors. ANALYST
+    // is intentionally granted parity with ADMIN here (role-consolidation
+    // decision) — this may later be narrowed back to ADMIN-only.
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
     @PatchMapping("/{id}/approve")
     public void approve(@PathVariable Long id) { svc.approve(id); }
-    @PreAuthorize("hasRole('ADMIN')")
+    // Same rationale as approve() above: ANALYST parity is intentional and
+    // may later be narrowed back to ADMIN-only.
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
     @PatchMapping("/approve-all")
     public void approveAll() { svc.approveAll(); }
-    @PreAuthorize("hasRole('ADMIN')")
+    // Same rationale as approve() above: ANALYST parity is intentional and
+    // may later be narrowed back to ADMIN-only.
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
     @DeleteMapping("/{id}")
     public void delete(@PathVariable Long id) { svc.delete(id); }
 

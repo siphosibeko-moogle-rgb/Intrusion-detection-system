@@ -48,7 +48,7 @@ public class AuthController {
     public ResponseEntity<?> register(@RequestBody Map<String, String> body) {
         String username = body.get("username");
         String password = body.get("password");
-        String role     = body.getOrDefault("role", "VIEWER");
+        String role     = body.getOrDefault("role", "ANALYST");
 
         if (userRepo.findByUsername(username).isPresent())
             return ResponseEntity.badRequest().body(Map.of("error", "Username already exists"));

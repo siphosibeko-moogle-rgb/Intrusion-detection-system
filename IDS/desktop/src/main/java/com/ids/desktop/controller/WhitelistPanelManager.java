@@ -63,6 +63,7 @@ public class WhitelistPanelManager {
     private TableView<FlaggedIpItem> flaggedIpTable;
     private CheckBox cbSelectAllFlagged;
     private Label    lblFlaggedCount;
+    private Tab      triageTab;
 
     public WhitelistPanelManager(Supplier<DataLoader> dataLoader,
                                  Supplier<BackendClient> backend,
@@ -194,6 +195,11 @@ public class WhitelistPanelManager {
         table.setPlaceholder(new Label("No flagged IPs."));
     }
 
+    /** The top-level Triage tab whose title shows the pending count as a badge. */
+    public void bindTriageTab(Tab triageTab) {
+        this.triageTab = triageTab;
+    }
+
     // ── LOADING / FILTERING ─────────────────────────────────────────────────
 
     public void reload() {
@@ -223,6 +229,7 @@ public class WhitelistPanelManager {
             }
         }
         lblFlaggedCount.setText("Flagged IPs — " + flagged.size() + " pending");
+        if (triageTab != null) triageTab.setText("Triage (" + flagged.size() + ")");
     }
 
     private void applyFilter() {

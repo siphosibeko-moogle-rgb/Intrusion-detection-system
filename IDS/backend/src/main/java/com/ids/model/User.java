@@ -16,7 +16,7 @@ public class User {
     @Column(nullable = false)
     private String password;
 
-    private String role; // ADMIN | VIEWER
+    private String role; // ADMIN | ANALYST
 
     public User() {}
     public User(String username, String password, String role) {

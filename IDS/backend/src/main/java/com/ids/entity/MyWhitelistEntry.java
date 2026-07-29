@@ -4,7 +4,9 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "my_whitelist")
+@Table(name = "my_whitelist",
+       uniqueConstraints = @UniqueConstraint(name = "uq_my_whitelist_ip",
+                                             columnNames = "ip"))
 public class MyWhitelistEntry {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -181,8 +181,10 @@ public class AlertController {
      *
      * Broadcasts on /topic/alerts-cleared so live clients wipe their tables.
      */
-    // ADMIN only: irreversibly wipes every alert, too destructive for VIEWER.
-    @PreAuthorize("hasRole('ADMIN')")
+    // Irreversibly wipes every alert. ANALYST is intentionally granted
+    // parity with ADMIN here (role-consolidation decision) — this may
+    // later be narrowed back to ADMIN-only.
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
     @DeleteMapping
     public ResponseEntity<?> clearAll() {
         summaryRepository.deleteAll();

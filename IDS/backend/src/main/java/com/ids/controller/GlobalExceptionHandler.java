@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.ids.exception.DuplicateWhitelistEntryException;
+
 /**
  * One place for uncaught controller exceptions, so every REST endpoint
  * returns the same {"error": ...} JSON shape instead of the whitelabel
@@ -37,6 +39,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> notFound(NoSuchElementException e) {
         return ResponseEntity.status(404).body(Map.of("error", e.getMessage() != null
                 ? e.getMessage() : "Not found"));
+    }
+
+    @ExceptionHandler(DuplicateWhitelistEntryException.class)
+    public ResponseEntity<?> duplicate(DuplicateWhitelistEntryException e) {
+        return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
     }
 
     /**

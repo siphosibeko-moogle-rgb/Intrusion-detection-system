@@ -36,6 +36,10 @@ public class NetworkWhitelist {
     private String       gateway        = null;
     private List<String> dockerSubnets  = new ArrayList<>();
 
+    // Optional capture-interface allowlist (ids.capture.interfaces).
+    // Empty = not configured → engine keeps its auto-discovery behavior.
+    private final List<String> captureInterfaces = new ArrayList<>();
+
     // trustedScanners is reused by NmapScanDetector, HttpAnomalyDetector,
     // LateralMovementDetector, LowAndSlowScanDetector, and SqlInjectionDetector —
     // the underlying concept is the same in all five: "this host is authorized
@@ -168,6 +172,16 @@ public class NetworkWhitelist {
                 System.err.println("[Whitelist] WARNING: network.gateway not set in "
                     + "ids-whitelist.properties.");
                 gateway = null;
+            }
+
+            // ids.capture.interfaces=wlp1s0,br-pentest — capture ONLY these.
+            // Absent/empty → engine auto-discovers interfaces as before.
+            String captureIfacesProp = p.getProperty("ids.capture.interfaces", "");
+            if (!captureIfacesProp.isBlank()) {
+                for (String s : captureIfacesProp.split(",")) {
+                    String trimmed = s.trim();
+                    if (!trimmed.isEmpty()) captureInterfaces.add(trimmed);
+                }
             }
 
             String dockerSubnetsProp = p.getProperty("network.docker.subnets", "");
@@ -566,8 +580,11 @@ public class NetworkWhitelist {
     	return gateway; }
     public String  getSubnet()         { 
     	return subnet; }
-    public List<String> getInternalServers() { 
+    public List<String> getInternalServers() {
     	return new ArrayList<>(internalServers); }
+    /** Capture allowlist from ids.capture.interfaces; empty = not configured. */
+    public List<String> getCaptureInterfaces() {
+        return new ArrayList<>(captureInterfaces); }
     public int     getWorkStartHour()  { return workStart; }
     public int     getWorkEndHour()    { return workEnd; }
     public String  getWorkTimezone()   { return timezone; }

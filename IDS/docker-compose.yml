@@ -76,7 +76,6 @@ services:
     environment:
       IDS_ENGINE_USER: ${IDS_ENGINE_USER}
       IDS_ENGINE_PASS: ${IDS_ENGINE_PASS}
-      IDS_ENGINE_APIKEY: ${IDS_ENGINE_APIKEY}
       # Per-engine ingest key issued via /admin/approvals (AlertManager reads this)
       IDS_ENGINE_KEY: ${IDS_ENGINE_KEY}
 
