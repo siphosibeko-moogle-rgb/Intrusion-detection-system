@@ -1,0 +1,58 @@
+# Friend test bundle — Windows/Mac. Docker Desktop can't do raw packet
+# capture on the host's real interfaces the way Linux host networking can,
+# so only db + backend run here. The engine runs natively on the host via
+# run-engine-native.ps1 (Windows) with Npcap installed — see README.md.
+#
+# Run this from inside share/:
+#
+#   docker compose -f friend-compose.desktop.yml --env-file .env up -d --build
+
+services:
+
+  db:
+    image: postgres:15
+    container_name: ids_db
+    environment:
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ids_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Alphabetical filenames matter: "init-schema.sql" < "init2-engine-key.sql".
+      - ./db/IDS_db.sql:/docker-entrypoint-initdb.d/init-schema.sql
+      - ./init2-engine-key.sql:/docker-entrypoint-initdb.d/init2-engine-key.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ids_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: ids_backend
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ids_db
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      IDS_JWT_SECRET: ${IDS_JWT_SECRET}
+      IDS_JWT_EXPIRATION: ${IDS_JWT_EXPIRATION:-86400000}
+      IDS_ADMIN_USERNAME: ${IDS_ADMIN_USERNAME}
+      IDS_ADMIN_PASSWORD: ${IDS_ADMIN_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c 'cat < /dev/null > /dev/tcp/localhost/8080' && exit 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  db_data:

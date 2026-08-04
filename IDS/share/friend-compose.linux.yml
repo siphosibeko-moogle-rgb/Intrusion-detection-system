@@ -1,0 +1,103 @@
+# Friend test bundle — Linux, everything in Docker (db + backend + the
+# live-capture engine). Run this from inside share/:
+#
+#   docker compose -f friend-compose.linux.yml --env-file .env up -d --build
+#
+# Build context is ".." (the IDS/ project root) because backend/Dockerfile
+# and engine/Dockerfile COPY from backend/target and engine/target, which
+# only exist relative to IDS/, not to share/.
+#
+# Default bridge networking only (no custom lab network, no fixed IPs, no
+# attacker-box service) — just the three services a friend needs to see
+# the IDS actually working.
+
+services:
+
+  db:
+    image: postgres:15
+    container_name: ids_db
+    environment:
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ids_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Alphabetical filenames matter here: Postgres runs
+      # /docker-entrypoint-initdb.d/*.sql in filename order, and
+      # "init-schema.sql" < "init2-engine-key.sql", so the schema is always
+      # created before the engine-key seed is attempted.
+      - ./db/IDS_db.sql:/docker-entrypoint-initdb.d/init-schema.sql
+      - ./init2-engine-key.sql:/docker-entrypoint-initdb.d/init2-engine-key.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ids_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: ids_backend
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ids_db
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      IDS_JWT_SECRET: ${IDS_JWT_SECRET}
+      IDS_JWT_EXPIRATION: ${IDS_JWT_EXPIRATION:-86400000}
+      # One-time first-admin bootstrap. No-op once "Tiron bby" exists, so
+      # it's safe to leave these set for the life of the test bundle.
+      IDS_ADMIN_USERNAME: ${IDS_ADMIN_USERNAME}
+      IDS_ADMIN_PASSWORD: ${IDS_ADMIN_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c 'cat < /dev/null > /dev/tcp/localhost/8080' && exit 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  engine:
+    build:
+      context: ..
+      dockerfile: engine/Dockerfile
+    container_name: ids_engine
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    # Host networking so the engine can see real interfaces/traffic on this
+    # one machine, and so "http://localhost:8080" reaches the backend
+    # container above (whose port is published to the host).
+    network_mode: host
+
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+    security_opt:
+      - apparmor:unconfined
+
+    volumes:
+      - ./logs:/app/logs
+
+    environment:
+      IDS_ENGINE_USER: ${IDS_ENGINE_USER}
+      IDS_ENGINE_PASS: ${IDS_ENGINE_PASS}
+      IDS_ENGINE_KEY: ${IDS_ENGINE_KEY}
+
+    command:
+      - java
+      - -jar
+      - engine-1.0.0.jar
+      - ${IDS_CAPTURE_IFACE:-all}
+      - http://localhost:8080
+
+volumes:
+  db_data:

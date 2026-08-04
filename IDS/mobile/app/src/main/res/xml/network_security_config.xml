@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WHY THIS FILE EXISTS
+  ====================
+  Since Android 9 (API 28) cleartext HTTP is BLOCKED by default. Your backend
+  currently runs as plain http:// on the LAN, so without this file every request
+  fails with a confusing "CLEARTEXT communication not permitted" IOException
+  that looks like a network outage.
+
+  This config permits cleartext ONLY for private/LAN address ranges. Anything on
+  the public internet still requires HTTPS.
+
+  PRODUCTION NOTE: this is a development accommodation, not a final answer. An
+  IDS console shipping JWTs over cleartext on a network you are actively
+  monitoring for attackers is a real exposure — anyone with the port mirror you
+  set up on the TL-SG108E could read the token straight off the wire. Before any
+  real deployment, terminate TLS on the backend and delete this file.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>      <!-- emulator -> host loopback -->
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">192.168.0.0</domain>
+        <domain includeSubdomains="true">192.168.1.0</domain>
+    </domain-config>
+
+    <!--
+      Android's network security config matches on exact hostnames, not CIDR
+      ranges, so an arbitrary LAN IP such as 192.168.1.57 is NOT covered by the
+      entries above. During development the simplest correct approach is the
+      base-config below. REMOVE it once you move to HTTPS.
+    -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
