@@ -182,4 +182,27 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     int incrementLatestOccurrence(@Param("sourceIp")   String sourceIp,
                                   @Param("threatType") String threatType,
                                   @Param("seenAt")     Instant seenAt);
+
+    /**
+     * AI triage: mirrors a verdict's confidence/reasoning onto the single
+     * most recent matching alert row — same "update just the latest row"
+     * shape as incrementLatestOccurrence above. Deliberately never touches
+     * verification_status; that column is analyst-owned. Returns 0 (no-op)
+     * if the row has since been cleared — the triage_verdict sidecar table
+     * remains the source of truth for the verdict regardless.
+     */
+    @Modifying
+    @Query(value = """
+        UPDATE alerts
+           SET confidence_score  = :confidence,
+               confidence_reason = :reason
+         WHERE id = (SELECT id FROM alerts
+                     WHERE source_ip = :sourceIp AND threat_type = :threatType
+                     ORDER BY timestamp DESC
+                     LIMIT 1)
+        """, nativeQuery = true)
+    int updateLatestConfidence(@Param("sourceIp")   String sourceIp,
+                               @Param("threatType") String threatType,
+                               @Param("confidence") int confidence,
+                               @Param("reason")     String reason);
 }

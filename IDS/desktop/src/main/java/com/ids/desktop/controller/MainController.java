@@ -72,6 +72,16 @@ public class MainController implements Initializable {
     @FXML private Label    lblFlaggedCount;
     @FXML private Tab      tabTriage;
 
+    // Engine host-local config (Config sub-tab, Section 2)
+    @FXML private Label                     lblEngineCurrentIfaces;
+    @FXML private ListView<InterfaceChoice> lvEngineInterfaces;
+    @FXML private Label                     lblEngineConfigBanner;
+
+    // Engine structured settings form (Config sub-tab, Section 2b)
+    @FXML private TextField  tfEngineSubnet, tfEngineGateway, tfEngineDockerSubnets;
+    @FXML private TextField  tfEngineTrustedScanners, tfEngineBeaconDestinations, tfEngineDhcpMacs;
+    @FXML private ComboBox<String> cbEngineCaptureMode;
+
     // Cases
     @FXML private TableView<CaseItem>            casesTable;
     @FXML private TableColumn<CaseItem, String>  colCaseNum, colCaseTitle, colCaseStatus;
@@ -98,6 +108,7 @@ public class MainController implements Initializable {
     private DataLoader           dataLoader;
     private AlertTableManager    alertManager;
     private WhitelistPanelManager whitelistManager;
+    private EngineConfigPanelManager engineConfigManager;
     private CaseBoardManager     caseBoard;
     private IpInvestigationPanel investigationPanel;
     private CaseDetailPanel   caseDetailPanel;
@@ -172,6 +183,17 @@ public class MainController implements Initializable {
                 cbSelectAllFlagged, lblFlaggedCount);
         whitelistManager.bindTriageTab(tabTriage);
 
+        // Engine host-local config tab. EngineConfigClient hits the engine's
+        // 127.0.0.1:9091 loopback endpoint (NOT the backend), so it's a separate
+        // thin client with no login state — created once here.
+        engineConfigManager = new EngineConfigPanelManager(
+                () -> dataLoader, new com.ids.desktop.service.EngineConfigClient(),
+                this::setStatus);
+        engineConfigManager.bind(lblEngineCurrentIfaces, lvEngineInterfaces, lblEngineConfigBanner,
+                tfEngineSubnet, tfEngineGateway, tfEngineDockerSubnets,
+                tfEngineTrustedScanners, tfEngineBeaconDestinations, tfEngineDhcpMacs,
+                cbEngineCaptureMode);
+
         caseBoard = new CaseBoardManager(
                 () -> dataLoader, () -> backend, this::isReady,
                 this::openCaseDetail);
@@ -237,6 +259,7 @@ public class MainController implements Initializable {
                 this::onAlertsLoaded,
                 msg -> handleSessionError("Alert load failed", msg));
         whitelistManager.reload();
+        engineConfigManager.reload();
         caseBoard.reload();
     }
 
@@ -429,6 +452,12 @@ public class MainController implements Initializable {
     @FXML private void onSelectAllFlagged()     { whitelistManager.toggleSelectAllFlagged(); }
     @FXML private void onAcceptFlagged()        { whitelistManager.acceptSelectedFlagged(); }
     @FXML private void onRemoveFlagged()        { whitelistManager.clearFlaggedSelection(); }
+
+    // ── ENGINE CONFIG ACTIONS — thin delegations to EngineConfigPanelManager ──
+
+    @FXML private void onSaveEngineConfig()    { engineConfigManager.save(); }
+    @FXML private void onReloadEngineConfig()  { engineConfigManager.reload(); }
+    @FXML private void onSaveEngineSettings()  { engineConfigManager.saveSettings(); }
 
     // ── CASE ACTIONS — thin delegations to CaseBoardManager ──────────────────
 

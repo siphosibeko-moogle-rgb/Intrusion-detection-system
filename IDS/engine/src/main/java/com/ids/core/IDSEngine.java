@@ -43,6 +43,10 @@ public class IDSEngine {
     private Thread           alertThread;
     private String           backendToken;
 
+    // Loopback-only HTTP endpoint for host-local config edits (capture
+    // interfaces). Started after auth; stopped in shutdown().
+    private EngineConfigServer configServer;
+
     // Multiple capture handles, one per interface
     // Previously: single PcapHandle pcapHandle (only captured one interface).
     // Now: one handle per relevant interface, each with its own capture thread.
@@ -88,12 +92,28 @@ public class IDSEngine {
     // ── Entry point ──────────────────────────────────────────────────────────
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 0 && "--setup".equals(args[0])) {
+            new SetupCli().run();
+            return; // never falls through to capture
+        }
+
         printBanner();
         // args[0] = interface name(s) or "all" — default "all"
-        // args[1] = backend URL                — default http://localhost:8080
+        // args[1] = backend URL — default http://localhost:8080, unless
+        //           ids.backend.url is set in ids-whitelist.properties
+        //           (written by --setup), which then wins over the default.
         String iface   = args.length > 0 ? args[0] : "all";
-        String backend = args.length > 1 ? args[1] : "http://localhost:8080";
+        String backend = args.length > 1 ? args[1] : resolveConfiguredBackendUrl();
         new IDSEngine().start(iface, backend);
+    }
+
+    // Peeks ids-whitelist.properties for ids.backend.url without touching
+    // the backend (the no-arg constructor only calls loadProperties(), no
+    // HTTP) — needed because the real NetworkWhitelist can't be built until
+    // after loginToBackend(), which is exactly the URL we're resolving here.
+    private static String resolveConfiguredBackendUrl() {
+        String fromProps = new NetworkWhitelist().getBackendUrl();
+        return (fromProps != null && !fromProps.isBlank()) ? fromProps : "http://localhost:8080";
     }
 
     public void start(String ifaceArg, String backendUrl) throws Exception {
@@ -114,6 +134,12 @@ public class IDSEngine {
         // silently running on stale trust data forever.
         whitelist.setTokenSupplier(() -> loginToBackend(backendUrl));
         scheduler.scheduleAtFixedRate(whitelist::refresh, 30, 30, TimeUnit.SECONDS);
+
+        // 3b. Host-local config endpoint (loopback only). Started after auth so
+        //     it only comes up once the engine is otherwise healthy. Daemon-
+        //     backed, so it never blocks shutdown; stopped in shutdown().
+        configServer = new EngineConfigServer(mapper);
+        configServer.start();
 
         // 4. All detectors. One add() per detector — process() and cleanup()
         //    iterate the list, so this is the only place a detector is wired.
@@ -162,9 +188,15 @@ public class IDSEngine {
       
         List<PcapNetworkInterface> targets = resolveInterfaces(ifaceArg);
 
+        // capture.mode (ids-whitelist.properties, --setup): NORMAL opts out
+        // of promiscuous capture; anything else (including unset) keeps the
+        // existing PROMISCUOUS default.
+        PromiscuousMode captureMode = "NORMAL".equalsIgnoreCase(whitelist.getCaptureMode())
+            ? PromiscuousMode.NONPROMISCUOUS : PromiscuousMode.PROMISCUOUS;
+
         System.out.println("\n[IDS] Capturing on " + targets.size() + " interface(s):");
         for (PcapNetworkInterface iface : targets) {
-            PcapHandle handle = iface.openLive(SNAP_LEN, PromiscuousMode.PROMISCUOUS, TIMEOUT_MS);
+            PcapHandle handle = iface.openLive(SNAP_LEN, captureMode, TIMEOUT_MS);
             handle.setFilter(BPF_FILTER, BpfCompileMode.OPTIMIZE);
             captureHandles.add(handle);
 
@@ -523,6 +555,10 @@ public class IDSEngine {
     private void shutdown() {
         System.out.println("\n[IDS] Shutting down...");
         scheduler.shutdownNow();
+
+        // Stop the config listener first so the port frees up immediately and a
+        // fast engine restart doesn't hit a lingering 127.0.0.1:9091 bind.
+        if (configServer != null) configServer.stop();
 
         // Order matters: breakLoop() → wait for capture threads to leave the
         // native pcap loop → close(). Closing while a thread is inside loop()

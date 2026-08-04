@@ -2,6 +2,7 @@ package com.ids.service;
 
 import com.ids.entity.TrustedNetworkEntry;
 import com.ids.repository.TrustedNetworkRepository;
+import com.ids.util.CidrUtils;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -18,6 +19,21 @@ public class TrustedNetworkService {
 
     public List<TrustedNetworkEntry> getAll()     { return repo.findAll(); }
     public List<TrustedNetworkEntry> getEnabled() { return repo.findByEnabledTrue(); }
+
+    /**
+     * True if ip falls inside any ENABLED trusted_networks CIDR (Cloudflare,
+     * AWS, Google, Azure, admin-added custom ranges, ...). Used by
+     * AiTriageService as the "sourceTrustedNetwork" evidence flag — distinct
+     * from OrgWhitelistService.isWhitelisted()/TrustedCidrRangeService,
+     * which cover the separate approved-org-IP / internal-LAN trust systems.
+     */
+    public boolean isTrusted(String ip) {
+        if (ip == null || ip.isBlank()) return false;
+        for (TrustedNetworkEntry e : repo.findByEnabledTrue()) {
+            if (CidrUtils.matches(ip, e.getCidr())) return true;
+        }
+        return false;
+    }
 
     public TrustedNetworkEntry add(String cidr, String provider, String category,
                                    Boolean enabled, Boolean suppressBeaconing) {

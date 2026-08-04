@@ -1,11 +1,13 @@
 package com.ids.repository;
 
 import com.ids.model.AlertSummary;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public interface AlertSummaryRepository extends JpaRepository<AlertSummary, Long> {
 
@@ -13,6 +15,23 @@ public interface AlertSummaryRepository extends JpaRepository<AlertSummary, Long
     List<AlertSummary> findBySeverityOrderByLastSeenDesc(String severity);
     List<AlertSummary> findByThreatTypeOrderByLastSeenDesc(String threatType);
     List<AlertSummary> findBySourceIpOrderByLastSeenDesc(String sourceIp);
+
+    /**
+     * AiTriageSweepScheduler's candidate SCAN — oldest-of-the-new first, one
+     * page capped at max-actors-per-sweep, so the scheduler's high-water
+     * mark can always advance to exactly what it fetched with no gaps.
+     *
+     * Returns the closed projection (see AlertSummaryKeyProjection), not the
+     * full entity: this query must never fail to hydrate a row, since a
+     * failure here would leave the high-water mark stuck forever, wedging
+     * the whole sweep. The full entity is fetched per-candidate afterwards
+     * via findBySourceIpAndThreatType, isolated inside the scheduler's
+     * per-row try/catch instead.
+     */
+    List<AlertSummaryKeyProjection> findByLastSeenAfterOrderByLastSeenAsc(Instant since, Pageable pageable);
+
+    /** Full-entity fetch for one candidate selected by the scan above. */
+    Optional<AlertSummary> findBySourceIpAndThreatType(String sourceIp, String threatType);
 
     /**
      * FIX: Added so AlertController.stats() counts from alert_summary

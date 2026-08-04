@@ -192,6 +192,120 @@
                             </VBox>
                         </Tab>
 
+                        <!-- SUB-TAB 4: CONFIG -->
+                        <Tab text="Config">
+                            <VBox spacing="12" style="-fx-padding:12;">
+
+                                <!-- SECTION 1: Trust data (LIVE — no restart). Read-only
+                                     pointer; the actual CRUD stays in the tabs above so we
+                                     don't ship a confusing duplicate editor. -->
+                                <VBox spacing="4"
+                                      style="-fx-padding:10; -fx-background-color:#f0fdf4;
+                                             -fx-border-color:#bbf7d0; -fx-border-radius:6;
+                                             -fx-background-radius:6;">
+                                    <Label text="Trust data — LIVE (no restart needed)"
+                                           style="-fx-font-weight:bold; -fx-text-fill:#15803d;"/>
+                                    <Label wrapText="true" style="-fx-text-fill:#374151;"
+                                           text="Trusted devices and provider CIDR ranges are stored in the database and sync to the engine automatically (about every 30s). Edit them in the &quot;Trusted Devices&quot; and &quot;Trusted Networks&quot; sub-tabs above — they are intentionally not duplicated here."/>
+                                </VBox>
+
+                                <!-- SECTION 2: Engine host-local config (RESTART REQUIRED).
+                                     The real new functionality: view/edit the engine's own
+                                     ids.capture.interfaces via its 127.0.0.1:9091 endpoint. -->
+                                <VBox spacing="8" VBox.vgrow="ALWAYS"
+                                      style="-fx-padding:10; -fx-background-color:#fffbeb;
+                                             -fx-border-color:#fde68a; -fx-border-radius:6;
+                                             -fx-background-radius:6;">
+                                    <Label text="Engine capture interfaces — HOST-LOCAL (RESTART REQUIRED)"
+                                           style="-fx-font-weight:bold; -fx-text-fill:#b45309;"/>
+                                    <Label wrapText="true" style="-fx-text-fill:#374151;"
+                                           text="These live in the engine's ids-whitelist.properties on the engine host and are read once at startup. Changes take effect only after the engine is restarted."/>
+                                    <HBox spacing="6" alignment="CENTER_LEFT">
+                                        <Label text="Currently configured:"
+                                               style="-fx-text-fill:#374151;"/>
+                                        <Label fx:id="lblEngineCurrentIfaces" text="(loading…)"
+                                               style="-fx-font-weight:bold; -fx-text-fill:#0e7490;"/>
+                                    </HBox>
+                                    <Label text="Interfaces present on the engine host — check the ones to capture on:"
+                                           style="-fx-text-fill:#374151;"/>
+                                    <ListView fx:id="lvEngineInterfaces"
+                                              VBox.vgrow="ALWAYS" prefHeight="200"/>
+                                    <HBox spacing="8" alignment="CENTER_LEFT">
+                                        <Button text="Save"
+                                                onAction="#onSaveEngineConfig"
+                                                style="-fx-text-fill:white;
+                                                       -fx-background-color:#3b82f6;"/>
+                                        <Button text="Reload"
+                                                onAction="#onReloadEngineConfig"/>
+                                    </HBox>
+
+                                    <!-- SECTION 2b: structured settings form (RESTART
+                                         REQUIRED, same as the interface list above).
+                                         Own Save button — one writer per key, so this
+                                         never touches ids.capture.interfaces. Reload
+                                         above refreshes this form too (one GET returns
+                                         both). -->
+                                    <Separator/>
+                                    <Label text="Engine network settings — HOST-LOCAL (RESTART REQUIRED)"
+                                           style="-fx-font-weight:bold; -fx-text-fill:#b45309;"/>
+                                    <Label wrapText="true" style="-fx-text-fill:#374151;"
+                                           text="Also read once at startup from the engine's ids-whitelist.properties. Changes take effect only after the engine is restarted."/>
+
+                                    <GridPane hgap="8" vgap="6">
+                                        <columnConstraints>
+                                            <ColumnConstraints minWidth="170"/>
+                                            <ColumnConstraints hgrow="ALWAYS"/>
+                                        </columnConstraints>
+
+                                        <Label text="Local subnet" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                                        <TextField fx:id="tfEngineSubnet"
+                                                   promptText="192.168.8.0/24 or 192.168.8."
+                                                   GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+
+                                        <Label text="Gateway" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                                        <TextField fx:id="tfEngineGateway"
+                                                   promptText="192.168.8.1"
+                                                   GridPane.rowIndex="1" GridPane.columnIndex="1"/>
+
+                                        <Label text="Docker subnets" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                                        <TextField fx:id="tfEngineDockerSubnets"
+                                                   promptText="10.50.0.0/16, 172.17.0."
+                                                   GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+
+                                        <Label text="Trusted scanner IPs" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                                        <TextField fx:id="tfEngineTrustedScanners"
+                                                   promptText="10.0.0.50, 10.0.0.51"
+                                                   GridPane.rowIndex="3" GridPane.columnIndex="1"/>
+
+                                        <Label text="Trusted beacon destinations" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                                        <TextField fx:id="tfEngineBeaconDestinations"
+                                                   promptText="10.0.0.5, 203.0.113.9"
+                                                   GridPane.rowIndex="4" GridPane.columnIndex="1"/>
+
+                                        <Label text="Trusted DHCP server MACs" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
+                                        <TextField fx:id="tfEngineDhcpMacs"
+                                                   promptText="aa:bb:cc:dd:ee:ff"
+                                                   GridPane.rowIndex="5" GridPane.columnIndex="1"/>
+
+                                        <Label text="Capture mode" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
+                                        <ComboBox fx:id="cbEngineCaptureMode"
+                                                  GridPane.rowIndex="6" GridPane.columnIndex="1"/>
+                                    </GridPane>
+
+                                    <HBox spacing="8" alignment="CENTER_LEFT">
+                                        <Button text="Save settings"
+                                                onAction="#onSaveEngineSettings"
+                                                style="-fx-text-fill:white;
+                                                       -fx-background-color:#3b82f6;"/>
+                                    </HBox>
+
+                                    <Label fx:id="lblEngineConfigBanner"
+                                           wrapText="true" visible="false" managed="false"/>
+                                </VBox>
+
+                            </VBox>
+                        </Tab>
+
                     </TabPane>
                 </Tab>
                 <!-- END Whitelist Tab -->

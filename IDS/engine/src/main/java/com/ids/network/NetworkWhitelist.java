@@ -10,6 +10,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class NetworkWhitelist {
 
+    // Single source of truth for the properties file name. loadProperties()
+    // reads it off the classpath; EngineConfigServer resolves that same
+    // classpath resource to a filesystem Path for read/write — so neither
+    // side hardcodes a second, drift-prone path to the same file.
+    public static final String PROPERTIES_RESOURCE = "ids-whitelist.properties";
+
     private String  backendUrl   = "http://localhost:8080";
     // volatile: replaced by the re-login path (see getWithAuthRetry) while
     // drain workers and the refresh scheduler read it concurrently.
@@ -35,6 +41,15 @@ public class NetworkWhitelist {
     private String       subnet         = null;
     private String       gateway        = null;
     private List<String> dockerSubnets  = new ArrayList<>();
+
+    // ids.backend.url from ids-whitelist.properties (--setup writes this).
+    // null = not configured; IDSEngine.main() falls back to its own default.
+    // Distinct from the `backendUrl` field above, which is the URL actually
+    // in use for this instance's HTTP calls (set via constructor arg).
+    private String configuredBackendUrl = null;
+
+    // capture.mode from ids-whitelist.properties: PROMISCUOUS | NORMAL.
+    private String captureMode = "PROMISCUOUS";
 
     // Optional capture-interface allowlist (ids.capture.interfaces).
     // Empty = not configured → engine keeps its auto-discovery behavior.
@@ -141,16 +156,14 @@ public class NetworkWhitelist {
     }
 
     private void loadProperties() {
-        try (java.io.InputStream in = getClass().getClassLoader()
-                .getResourceAsStream("ids-whitelist.properties")) {
-            if (in == null) {
+        try {
+            java.util.Properties p = loadLayeredProperties();
+            if (p == null) {
                 System.err.println("[Whitelist] ids-whitelist.properties not found — "
                     + "network.subnet/network.gateway are UNSET. isInternal() will "
                     + "treat ALL traffic as external until this file is present.");
                 return;
             }
-            java.util.Properties p = new java.util.Properties();
-            p.load(in);
             workStart    = Integer.parseInt(p.getProperty("work.hours.start", "8"));
             workEnd      = Integer.parseInt(p.getProperty("work.hours.end",   "18"));
             timezone     = p.getProperty("work.timezone", "Africa/Johannesburg");
@@ -172,6 +185,25 @@ public class NetworkWhitelist {
                 System.err.println("[Whitelist] WARNING: network.gateway not set in "
                     + "ids-whitelist.properties.");
                 gateway = null;
+            }
+
+            // ids.backend.url=http://backend.internal:8080 — written by
+            // `--setup`. Blank/absent stays null; IDSEngine.main() only
+            // consults this when no CLI backend arg was given.
+            String backendUrlProp = p.getProperty("ids.backend.url");
+            if (backendUrlProp != null && !backendUrlProp.isBlank()) {
+                configuredBackendUrl = backendUrlProp.trim();
+            }
+
+            // capture.mode=PROMISCUOUS|NORMAL — written by `--setup`.
+            // Unrecognized values fall back to PROMISCUOUS rather than
+            // failing the whole properties load.
+            String captureModeProp = p.getProperty("capture.mode", "PROMISCUOUS").trim().toUpperCase();
+            if (captureModeProp.equals("PROMISCUOUS") || captureModeProp.equals("NORMAL")) {
+                captureMode = captureModeProp;
+            } else {
+                System.err.println("[Whitelist] WARNING: capture.mode '" + captureModeProp
+                    + "' not recognized (expected PROMISCUOUS or NORMAL) — defaulting to PROMISCUOUS.");
             }
 
             // ids.capture.interfaces=wlp1s0,br-pentest — capture ONLY these.
@@ -248,6 +280,9 @@ public class NetworkWhitelist {
             System.out.println("[Whitelist] Properties loaded — work hours: "
                 + workStart + ":00–" + workEnd + ":00 (" + timezone + ")");
             System.out.println("[Whitelist] Subnet: " + subnet + "  Gateway: " + gateway);
+            System.out.println("[Whitelist] Capture mode: " + captureMode);
+            if (configuredBackendUrl != null)
+                System.out.println("[Whitelist] Configured backend URL: " + configuredBackendUrl);
             if (!dockerSubnets.isEmpty())
                 System.out.println("[Whitelist] Docker subnets: " + dockerSubnets);
             if (!internalServers.isEmpty())
@@ -267,6 +302,82 @@ public class NetworkWhitelist {
 
         } catch (Exception e) {
             System.err.println("[Whitelist] Could not load properties: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Loads {@code ids-whitelist.properties} as two LAYERS rather than
+     * picking one source wholesale: the classpath-bundled copy as the base,
+     * with an external file next to the running jar/classes directory
+     * layered on top key-by-key. Returns null only when neither source is
+     * present at all.
+     *
+     * Why layering, not swapping: {@code --setup} / {@code EngineConfigServer}
+     * often write a PARTIAL file — e.g. one that only sets
+     * {@code ids.capture.interfaces}. An earlier version of this method
+     * picked the external file wholesale whenever one existed, which silently
+     * deleted every bundled key the external file didn't happen to mention —
+     * including {@code network.dhcp.trusted.servers}, turning off DHCP-spoof
+     * protection with no error anywhere. Layering means an external file only
+     * ever ADDS to or overrides individual keys; it can never blank out a
+     * bundled key by omission.
+     */
+    private java.util.Properties loadLayeredProperties() throws java.io.IOException {
+        java.util.Properties merged = new java.util.Properties();
+        boolean anyLoaded = false;
+
+        boolean bundledFound = false;
+        try (java.io.InputStream in = getClass().getClassLoader()
+                .getResourceAsStream(PROPERTIES_RESOURCE)) {
+            if (in != null) {
+                merged.load(in);
+                anyLoaded = true;
+                bundledFound = true;
+            }
+        }
+
+        java.nio.file.Path external = resolveExternalPropertiesPath();
+        boolean externalFound = external != null && java.nio.file.Files.isRegularFile(external);
+        if (externalFound) {
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(external)) {
+                java.util.Properties overlay = new java.util.Properties();
+                overlay.load(in);
+                merged.putAll(overlay);
+                anyLoaded = true;
+            }
+            System.out.println("[Whitelist] Layered external ids-whitelist.properties over "
+                + "bundled defaults: " + external.toAbsolutePath());
+        } else if (bundledFound) {
+            System.out.println("[Whitelist] No external ids-whitelist.properties found"
+                + (external != null ? " at " + external.toAbsolutePath() : "")
+                + " — using bundled classpath defaults only.");
+        }
+
+        return anyLoaded ? merged : null;
+    }
+
+    /**
+     * Resolves {@code ids-whitelist.properties} as a filesystem path next to
+     * the running jar (or inside the exploded classes directory in dev) —
+     * WITHOUT regard to whether a file actually exists there yet. This is the
+     * single source of truth for "where does the external config file live",
+     * shared by this class's read path above and
+     * {@link com.ids.core.EngineConfigServer}'s read/write path, so the two
+     * can never disagree on the location. {@code SetupCli} independently
+     * resolves the same directory when deciding where to write.
+     *
+     * Returns null if it can't be determined (e.g. an exotic classloader) —
+     * callers must treat that as "no external file available", not an error.
+     */
+    public static java.nio.file.Path resolveExternalPropertiesPath() {
+        try {
+            java.net.URL loc = NetworkWhitelist.class.getProtectionDomain().getCodeSource().getLocation();
+            java.nio.file.Path location = java.nio.file.Path.of(loc.toURI());
+            java.nio.file.Path dir = java.nio.file.Files.isDirectory(location)
+                ? location : location.getParent();
+            return dir != null ? dir.resolve(PROPERTIES_RESOURCE) : null;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -585,6 +696,10 @@ public class NetworkWhitelist {
     /** Capture allowlist from ids.capture.interfaces; empty = not configured. */
     public List<String> getCaptureInterfaces() {
         return new ArrayList<>(captureInterfaces); }
+    /** ids.backend.url from ids-whitelist.properties; null when not configured. */
+    public String  getBackendUrl()     { return configuredBackendUrl; }
+    /** capture.mode from ids-whitelist.properties; PROMISCUOUS or NORMAL. */
+    public String  getCaptureMode()    { return captureMode; }
     public int     getWorkStartHour()  { return workStart; }
     public int     getWorkEndHour()    { return workEnd; }
     public String  getWorkTimezone()   { return timezone; }
