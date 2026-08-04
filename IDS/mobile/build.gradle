@@ -1,7 +1,0 @@
-// Root build file. Intentionally standalone: this project is NOT part of the
-// engine/backend/desktop Maven reactor. Those are plain JVM modules; this one
-// needs the Android Gradle Plugin. Keeping them separate avoids polluting the
-// server-side build with Android tooling. The only coupling is the HTTP API.
-plugins {
-    id 'com.android.application' version '9.3.1' apply false
-}
