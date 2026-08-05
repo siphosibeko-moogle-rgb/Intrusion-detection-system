@@ -1,30 +1,37 @@
-# Friend test bundle — Windows native engine launcher.
+#!/usr/bin/env bash
+# Runs the IDS engine NATIVELY (outside Docker) so it can capture traffic on
+# the real host NIC instead of Docker's internal bridge network. 
+# PREREQUISITES
+#   1. Java 17+ on PATH        (java -version)
+#   2. libpcap installed        (sudo apt install libpcap-dev  — Debian/Ubuntu/Kali base)
+#   3. Backend + db already running via docker compose (friend-compose.linux.yml
+#      or friend-compose.desktop.yml) — do NOT also run ids_engine in Docker
+#      at the same time, or you'll get two engines both trying to log in and
+#      submit alerts.
+#   4. engine-1.0.0.jar in this folder.
 #
-# Run this AFTER friend-compose.desktop.yml is up and you've confirmed you
-# can log in to the desktop client as "Tiron bby" / AIMAN. Requires:
-#   - Java 17+ on PATH
-#   - Npcap installed (https://npcap.com/#download) — check "WinPcap API
-#     compatible mode" during install, or packet capture will fail
-#   - engine/target/engine-1.0.0.jar already built (mvn -pl engine package,
-#     or the full `mvn package` from the IDS/ root)
-#
-# Usage (from inside share/, in PowerShell):
-#   .\run-engine-native.ps1
+# RUN AS ROOT — raw packet capture needs it:
+#   sudo ./run-engine-native.sh
 
-$ErrorActionPreference = "Stop"
+set -euo pipefail
 
-$env:IDS_ENGINE_USER = "Tiron bby"
-$env:IDS_ENGINE_PASS = "AIMAN"
-$env:IDS_ENGINE_KEY  = "piQLNx4vEFAmJ1IaMC1993hv9x8IpyQ7ij9J7orJGp8"
+# --- config: must match your .env ---
+export IDS_ENGINE_USER="Tiron bby"
+export IDS_ENGINE_PASS="AIMAN"
+export IDS_ENGINE_KEY="piQLNx4vEFAmJ1IaMC1993hv9x8IpyQ7ij9J7orJGp8"
 
-$jar = Join-Path $PSScriptRoot "..\engine\target\engine-1.0.0.jar"
+# Find real interfaces with: ip -o link show
+# Leave "all" to auto-detect, or set a specific name (e.g. enp0s3, wlan0).
+IFACE="all"
+BACKEND="http://localhost:8080"
 
-if (-not (Test-Path $jar)) {
-    Write-Error "Can't find $jar — build it first: mvn -pl engine package (run from the IDS/ project root)."
-    exit 1
-}
+if [ "$EUID" -ne 0 ]; then
+  echo "Run this with sudo — raw capture needs root." >&2
+  exit 1
+fi
 
-Write-Host "Starting engine as '$($env:IDS_ENGINE_USER)' against http://localhost:8080 ..."
-Write-Host "(If this window needs to stay open as Administrator for packet capture, re-launch PowerShell as Administrator first.)"
-
-java -jar $jar all http://localhost:8080
+echo "Stop the containerized engine first if it's running:"
+echo "  docker stop ids_engine"
+echo ""
+echo "Starting native IDS engine on interface '$IFACE' against $BACKEND ..."
+java -jar engine-1.0.0.jar "$IFACE" "$BACKEND"
